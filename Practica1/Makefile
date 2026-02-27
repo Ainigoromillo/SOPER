@@ -3,9 +3,9 @@ program=miner
 CC = gcc
 CFLAGS = -ansi -pedantic -Wall -g
 
-ARG1 = 10
-ARG2 = 5
-ARG3 = 2
+TARGET = 40
+ROUNDS = 5
+THREADS = 2
 
 all: $(program) 
 
@@ -25,7 +25,7 @@ clean:
 	rm $(objects) $(program)
 
 run:
-	./miner $(ARG1) $(ARG2) $(ARG3)
+	./miner $(TARGET) $(ROUNDS) $(THREADS)
 
 runv:
-	valgrind --leak-check=full ./miner $(ARG1) $(ARG2) $(ARG3)
+	valgrind --leak-check=full ./miner $(TARGET) $(ROUNDS) $(THREADS)
