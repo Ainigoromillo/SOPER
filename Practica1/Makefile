@@ -4,8 +4,8 @@ CC = gcc
 CFLAGS = -ansi -pedantic -Wall -g
 
 TARGET = 40
-ROUNDS = 5
-THREADS = 2
+ROUNDS = 50
+THREADS = 1
 
 all: $(program) 
 
@@ -22,8 +22,10 @@ pow.o: pow.c
 
 .PHONY: clean run all
 clean:
-	rm $(objects) $(program)
+	rm $(objects) $(program) *.log
 
+cleanLog:
+	rm *.log
 run:
 	./miner $(TARGET) $(ROUNDS) $(THREADS)
 

@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
         long solution;
         char *pointer;
 
-        printf("Soy el registrador\n");
+
         sprintf(buffer, "%jd.log", (intmax_t)getppid());
         /*Se cierran los pipes pertinentes y apertura de descriptor de fichero*/
 
@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
             close(minero_escribe[0]);
             close(registrador_escribe[1]);
 
-            printf("Register exited with status 1");
+            printf("Register exited with status 1\n");
             exit(EXIT_FAILURE);
         }
 
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
 
             if (solution < 0)
             {
-                printf("Register exited with status 0");
+                printf("Register exited with status 0\n");
                 exit(EXIT_SUCCESS);
             }
             dprintf(fd, "Id:%d \n"
@@ -154,7 +154,7 @@ int main(int argc, char *argv[])
         }
         close(minero_escribe[0]);
         close(registrador_escribe[1]);
-        printf("Register exited with status 0");
+        printf("Register exited with status 0\n");
         exit(EXIT_SUCCESS);
     }
     else
@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
 
                     close(minero_escribe[1]);
                     wait(NULL);
-                    printf("Miner exited with status 1");
+                    printf("Miner exited with status 1\n");
                     exit(EXIT_FAILURE);
                 }
                 thread_array[j] = h;
@@ -221,6 +221,7 @@ int main(int argc, char *argv[])
 
                     printf("%ld------->%ld\n", target_ini, *(long *)retval);
 
+
                     target_ini = *(long *)retval;
                 }
                 free(retval);
@@ -230,7 +231,7 @@ int main(int argc, char *argv[])
             if (read(registrador_escribe[0], buffer, sizeof(buffer)) <= 0)
             {
                 clean_and_free(n_threads, arg_array, thread_array);
-                printf("Miner exited with status 0");
+                printf("Miner exited with status 0\n");
                 wait(NULL);
                 return EXIT_SUCCESS;
             }
@@ -243,6 +244,6 @@ int main(int argc, char *argv[])
         clean_and_free(n_threads, arg_array, thread_array);
         wait(NULL);
     }
-    printf("Miner exited with status 0");
+    printf("Miner exited with status 0\n");
     return EXIT_SUCCESS;
 }
