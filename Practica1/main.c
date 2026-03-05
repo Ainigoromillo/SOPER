@@ -1,3 +1,11 @@
+/**
+ * @file main.c
+ * @author Alvaro Iñigo y Matteo Artuñedo
+ * @brief implementa un programa en el que varios mineros (hilos) tendrán que buscar la preimagen de un valor por una función hash y comunicarse con un registrador para escribirlo.
+ * @version 0.2
+ * @date 2026-02-28
+ * 
+ */
 #include <stdio.h>
 #include <pthread.h>
 #include <unistd.h>
@@ -9,15 +17,30 @@
 #include <stdint.h>
 #include "pow.h"
 
+/**
+ * @brief variable global que utilizarán los hilos para comunicarse si alguno de ellos ha terminado y detener a los demás
+ * 
+ */
 int finished = 0;
 
+/**
+ * @brief Estructura que almacena la información que deben recibir los hilos para poder ejecutar sus tareas
+ * 
+ */
 typedef struct
 {
-    long n_hilo;
-    long n_valores;
-    long target;
+    long n_hilo;    /*Indica qué numero de hilo es, desde el 0 al n-1, siendo n el número de hilos creados. El valor de n_hilo se utiliza para determinar el intervalo en el que el hilo debe buscar la solución*/
+    long n_valores; /*Indica el número de valores que tendrá que buscar el hilo. Se multiplica por el número de hilos para encontrar los valores concretos que tiene que buscar*/
+    long target;    /*Indica el valor cuya preimagen mediante la función hash se quiere encontrar*/
 } ArgsSolucion;
 
+/**
+ * @brief Libera todos los recursos creados para la ejecución de hilos
+ * 
+ * @param n_threads indica el número de hilos creados
+ * @param arg_array array de todas las estructuras creadas para ser pasadas como argumento a los hilos
+ * @param thread_array array de los identificadores de los hilos
+ */
 void clean_and_free(int n_threads, ArgsSolucion **arg_array, pthread_t *thread_array)
 {
     int k;
@@ -32,7 +55,7 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array, pthread_t *thread_a
 
 /**
  * @brief aplica la función hash a todos los valores entre un intervalo dado
- *
+ * @param arg estructura en la que el hilo recibe toda la información que necesita para ejecutarse correctamente
  * @return int el valor que satisface la solución hash
  */
 void *buscar_solucion(void *arg)
@@ -40,15 +63,19 @@ void *buscar_solucion(void *arg)
     long i = 0;
     long n_valores, n_hilo, target, *result;
 
+    /*Casteamos el array a su tipo correcto*/
     ArgsSolucion argssolucion;
     argssolucion = *((ArgsSolucion *)arg);
 
-    result = (long *)malloc(sizeof(long));
-
+    /*Leemos los datos de los argumentos*/
     n_valores = argssolucion.n_valores;
     n_hilo = argssolucion.n_hilo;
     target = argssolucion.target;
 
+    /*Reservamos memoria para la solución que devolveremos*/
+    result = (long *)malloc(sizeof(long));
+
+    /*Iteramos todos los valores posibles para encontrar el deseado*/
     for (i = n_valores * n_hilo; i < n_valores * (n_hilo + 1) && finished == 0; i++)
     {
         if (pow_hash(i) == target)
@@ -102,6 +129,7 @@ int main(int argc, char *argv[])
         perror("Error en el fork\n");
         return EXIT_FAILURE;
     }
+    /*Proceso hijo: registrador*/
     if (pid == 0)
     {
         int round;
@@ -110,7 +138,7 @@ int main(int argc, char *argv[])
 
 
         sprintf(buffer, "%jd.log", (intmax_t)getppid());
-        /*Se cierran los pipes pertinentes y apertura de descriptor de fichero*/
+        /*Se cierran los pipes que no necesitaremos y se abre el descriptor de fichero donde escribiremos los resultados*/
 
         close(minero_escribe[1]);      /*minero escribe (write) */
         close(registrador_escribe[0]); /*registrador escribe (read) */
@@ -141,6 +169,7 @@ int main(int argc, char *argv[])
                 printf("Register exited with status 0\n");
                 exit(EXIT_SUCCESS);
             }
+            /*Escribe los resultados en el fichero*/
             dprintf(fd, "Id:%d \n"
                         "Winner:%jd \n"
                         "Target:%ld \n"
@@ -157,6 +186,7 @@ int main(int argc, char *argv[])
         printf("Register exited with status 0\n");
         exit(EXIT_SUCCESS);
     }
+    /*Proceso padre: minero*/
     else
     {
         /**Se cierran pipes pertinentes*/
@@ -215,10 +245,12 @@ int main(int argc, char *argv[])
                 if (*(long *)retval != -1)
                 {
 
+                    /*Se ha encontrado una solución, se le envía al registrador*/
                     sprintf(buffer, "%d|%ld|%ld\n", i, target_ini, *(long *)retval);
 
                     write(minero_escribe[1], buffer, strlen(buffer) + 1);
 
+                    /*Imprimimos por terminal también*/
                     printf("%ld------->%ld\n", target_ini, *(long *)retval);
 
 
