@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include "pow.h"
 
+#define SOLUTION_NOT_FOUND -1 /**Valor que devuelven los hilos si no han encontrado una solución para el target */
+
 /**
  * @brief variable global que utilizarán los hilos para comunicarse si alguno de ellos ha terminado y detener a los demás
  * 
@@ -85,7 +87,7 @@ void *buscar_solucion(void *arg)
             pthread_exit(result);
         }
     }
-    *result = -1;
+    *result = SOLUTION_NOT_FOUND;
 }
 
 int main(int argc, char *argv[])
@@ -95,6 +97,7 @@ int main(int argc, char *argv[])
     long interval = 0;
     int n_threads = 0;
     int error;
+    long solution;
     void *retval = NULL;
     int minero_escribe[2];
     int registrador_escribe[2];
@@ -102,6 +105,7 @@ int main(int argc, char *argv[])
 
     char validado[] = "validated";
     char rejected[] = "rejected";
+    char accepted[] = "accepted";
 
     char buffer[1024];
 
@@ -137,7 +141,6 @@ int main(int argc, char *argv[])
     if (pid == 0)
     {
         int round;
-        long solution;
         char *pointer;
 
 
@@ -168,11 +171,6 @@ int main(int argc, char *argv[])
             pointer = strtok(NULL, "|\n\r");
             solution = atol(pointer);
 
-            if (solution < 0)
-            {
-                printf("Register exited with status 0\n");
-                exit(EXIT_SUCCESS);
-            }
             /*Escribe los resultados en el fichero*/
             dprintf(fd, "Id:%d \n"
                         "Winner:%jd \n"
@@ -246,22 +244,22 @@ int main(int argc, char *argv[])
             for (j = 0; j < n_threads; j++)
             {
                 pthread_join(thread_array[j], &retval);
-                if (*(long *)retval != -1)
+                if (*(long *)retval != SOLUTION_NOT_FOUND)
                 {
-
-                    /*Se ha encontrado una solución, se le envía al registrador*/
-                    sprintf(buffer, "%d|%ld|%ld\n", i, target_ini, *(long *)retval);
-
-                    write(minero_escribe[1], buffer, strlen(buffer) + 1);
-
-                    /*Imprimimos por terminal también*/
-                    printf("%ld------->%ld\n", target_ini, *(long *)retval);
-
-
-                    target_ini = *(long *)retval;
+                    /*Nos guardamos la solución que sea correcta, pues los hilos que terminan sin encontrar una solución devuelven -1*/
+                    solution =  *(long *)retval;
                 }
                 free(retval);
             }
+
+            /*Se ha encontrado una solución, se le envía al registrador*/
+            sprintf(buffer, "%d|%ld|%ld\n", i, target_ini, solution);
+            write(minero_escribe[1], buffer, strlen(buffer) + 1);
+
+            /*Imprimimos por terminal también*/
+            printf("Solution %s: %ld------->%ld\n", accepted, target_ini, solution);
+
+            target_ini = solution;
 
             /**Leemos la señal del registrador para continuar con la siguiente ronda */
             if (read(registrador_escribe[0], buffer, sizeof(buffer)) <= 0)
@@ -275,11 +273,10 @@ int main(int argc, char *argv[])
         }
 
         /**Numero de rondas terminado, mandamos señal de final y liberamos memoria */
-        sprintf(buffer, "%d|%ld|%ld\n", i, target_ini, (long)-1);
-        write(minero_escribe[1], buffer, strlen(buffer) + 1);
+        close(minero_escribe[1]);
         clean_and_free(n_threads, arg_array, thread_array);
         wait(NULL);
+        printf("Miner exited with status 0\n");
     }
-    printf("Miner exited with status 0\n");
     return EXIT_SUCCESS;
 }
