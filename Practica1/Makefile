@@ -5,7 +5,7 @@ CFLAGS = -ansi -pedantic -Wall -g
 
 TARGET = 40
 ROUNDS = 50
-THREADS = 1
+THREADS = 5
 
 all: $(program) 
 

@@ -118,6 +118,10 @@ int main(int argc, char *argv[])
     n_rounds = atoi(argv[2]);
     n_threads = atoi(argv[3]);
 
+    if(target_ini < 0 || n_threads < 0){
+        printf("Argumentos erroneos");
+        exit(EXIT_FAILURE);
+    }
     /*Apertura del pipe*/
     pipe(minero_escribe);
     pipe(registrador_escribe);
@@ -179,7 +183,7 @@ int main(int argc, char *argv[])
                     round, (intmax_t)getppid(), target_ini, solution, validado, round, round, (intmax_t)getppid(), round);
 
             /**Manda señal de que ya ha escrito en el fichero */
-            write(registrador_escribe[1], buffer, sizeof(buffer));
+            write(registrador_escribe[1], buffer, strlen(buffer) + 1);
         }
         close(minero_escribe[0]);
         close(registrador_escribe[1]);
