@@ -6,7 +6,7 @@ OUTPUT="time.log"
 # Limpiar archivo antes de empezar
 echo "# n_hilos tiempo" > $OUTPUT
 
-for i in {1..200}
+for i in {1..20}
 do
     suma=0
     media=0

@@ -13,6 +13,12 @@ all: $(program)
 miner: $(objects)
 	$(CC) -o $@ $^
 
+minerRapido: mainRapido.o pow.o
+	$(CC) -o $@ $^
+
+mainRapido: mainRapido.c
+	$(CC) -o $@ -c $<
+
 main.o: main.c
 	$(CC) -o $@ -c $< 
 
@@ -22,7 +28,7 @@ pow.o: pow.c
 
 .PHONY: clean run all
 clean:
-	rm $(objects) $(program) *.log
+	rm *.o $(program) minerRapido *.log
 
 cleanLog:
 	rm *.log
