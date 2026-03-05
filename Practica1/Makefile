@@ -26,12 +26,16 @@ pow.o: pow.c
 	$(CC) -o $@ -c $< 
 
 
-.PHONY: clean run all
+.PHONY: clean cleanLog run all
 clean:
-	rm *.o $(program) minerRapido *.log
+	rm *.o $(program) *.log
 
 cleanLog:
 	rm *.log
+
+cleanRapido:
+	rm mainRapido.o mainRapido
+
 run:
 	./miner $(TARGET) $(ROUNDS) $(THREADS)
 

@@ -19,11 +19,8 @@
 
 #define SOLUTION_NOT_FOUND -1 /**Valor que devuelven los hilos si no han encontrado una solución para el target */
 
-/**
- * @brief variable global que utilizarán los hilos para comunicarse si alguno de ellos ha terminado y detener a los demás
- * 
- */
-int finished = 0;
+/**En esta iteración, determinaremos que una solución será rechazada si es múltiplo de diez. Este criterio será modificado en iteraciones futuras */
+#define VALIDATE(solution)((solution)%10==0 ? (0) : (1)) 
 
 /**
  * @brief Estructura que almacena la información que deben recibir los hilos para poder ejecutar sus tareas
@@ -34,6 +31,7 @@ typedef struct
     long n_hilo;    /*Indica qué numero de hilo es, desde el 0 al n-1, siendo n el número de hilos creados. El valor de n_hilo se utiliza para determinar el intervalo en el que el hilo debe buscar la solución*/
     long n_valores; /*Indica el número de valores que tendrá que buscar el hilo. Se multiplica por el número de hilos para encontrar los valores concretos que tiene que buscar*/
     long target;    /*Indica el valor cuya preimagen mediante la función hash se quiere encontrar*/
+    int *p_finished;  /*Puntero al flag que emplearán los hilos para comunicarse entre sí si alguno de ellos termina*/
 } ArgsSolucion;
 
 /**
@@ -64,6 +62,7 @@ void *buscar_solucion(void *arg)
 {
     long i = 0;
     long n_valores, n_hilo, target, *result;
+    int *p_finished=NULL;
 
     /*Casteamos el array a su tipo correcto*/
     ArgsSolucion argssolucion;
@@ -73,16 +72,18 @@ void *buscar_solucion(void *arg)
     n_valores = argssolucion.n_valores;
     n_hilo = argssolucion.n_hilo;
     target = argssolucion.target;
+    p_finished = argssolucion.p_finished;
+
 
     /*Reservamos memoria para la solución que devolveremos*/
     result = (long *)malloc(sizeof(long));
 
     /*Iteramos todos los valores posibles para encontrar el deseado*/
-    for (i = n_valores * n_hilo; i < n_valores * (n_hilo + 1) && finished == 0; i++)
+    for (i = n_valores * n_hilo; i < n_valores * (n_hilo + 1) && (*p_finished) == 0; i++)
     {
         if (pow_hash(i) == target)
         {
-            finished = 1;
+            *p_finished = 1;
             *result = i;
             pthread_exit(result);
         }
@@ -102,10 +103,12 @@ int main(int argc, char *argv[])
     int minero_escribe[2];
     int registrador_escribe[2];
     int fd;
+    int finished = 0;
 
     char validado[] = "validated";
     char rejected[] = "rejected";
     char accepted[] = "accepted";
+    char *status=NULL;
 
     char buffer[1024];
 
@@ -170,6 +173,7 @@ int main(int argc, char *argv[])
             target_ini = atol(pointer);
             pointer = strtok(NULL, "|\n\r");
             solution = atol(pointer);
+            status = strtok(NULL, "|\n\r");
 
             /*Escribe los resultados en el fichero*/
             dprintf(fd, "Id:%d \n"
@@ -178,7 +182,7 @@ int main(int argc, char *argv[])
                         "Solution: %ld (%s)\n"
                         "Votes: %d/%d \n"
                         "Wallets: %jd:%d\n\n",
-                    round, (intmax_t)getppid(), target_ini, solution, validado, round, round, (intmax_t)getppid(), round);
+                    round, (intmax_t)getppid(), target_ini, solution, status, round, round, (intmax_t)getppid(), round);
 
             /**Manda señal de que ya ha escrito en el fichero */
             write(registrador_escribe[1], buffer, strlen(buffer) + 1);
@@ -207,6 +211,7 @@ int main(int argc, char *argv[])
             arg_array[i] = (ArgsSolucion *)malloc(sizeof(ArgsSolucion));
             arg_array[i]->n_valores = interval;
             arg_array[i]->n_hilo = i;
+            arg_array[i]->p_finished = &finished;
         }
 
         /*Ejecutamos el código del minero*/
@@ -252,12 +257,15 @@ int main(int argc, char *argv[])
                 free(retval);
             }
 
+            /*Determinamos si la solución será validada o rechazada. En esta iteración, se toma como criterio arbitrario que la solución sea múltiplo de 10*/
+            status = VALIDATE(solution) ? validado : rejected;
+
             /*Se ha encontrado una solución, se le envía al registrador*/
-            sprintf(buffer, "%d|%ld|%ld\n", i, target_ini, solution);
+            sprintf(buffer, "%d|%ld|%ld|%s\n", i, target_ini, solution, status);
             write(minero_escribe[1], buffer, strlen(buffer) + 1);
 
             /*Imprimimos por terminal también*/
-            printf("Solution %s: %ld------->%ld\n", accepted, target_ini, solution);
+            printf("Solution %s: %ld------->%ld\n", VALIDATE(solution)?accepted:rejected, target_ini, solution);
 
             target_ini = solution;
 
