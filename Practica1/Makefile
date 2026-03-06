@@ -11,10 +11,10 @@ all: $(program)
 
 
 miner: $(objects)
-	$(CC) -o $@ $^
+	$(CC) -o $@ $^ -lpthread
 
 minerRapido: mainRapido.o pow.o
-	$(CC) -o $@ $^
+	$(CC) -o $@ $^c-lpthread
 
 mainRapido: mainRapido.c
 	$(CC) -o $@ -c $<
