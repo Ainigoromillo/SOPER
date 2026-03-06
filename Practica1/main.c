@@ -44,13 +44,13 @@ typedef struct
 void clean_and_free(int n_threads, ArgsSolucion **arg_array, pthread_t *thread_array)
 {
     int k;
-    for (k = 0; k < n_threads; k++)
+    for (k = 0; k < n_threads && arg_array; k++)
     {
-        free(arg_array[k]);
+        if((arg_array)[k]) free(arg_array[k]);
     }
 
-    free(thread_array);
-    free(arg_array);
+    if(thread_array) free(thread_array);
+    if(arg_array) free(arg_array);
 }
 
 /**
@@ -125,7 +125,7 @@ int main(int argc, char *argv[])
     n_rounds = atoi(argv[2]);
     n_threads = atoi(argv[3]);
 
-    if(target_ini < 0 || n_threads < 0){
+    if(target_ini < 0 || n_threads <= 0 | n_rounds < 0){
         printf("Argumentos erroneos");
         exit(EXIT_FAILURE);
     }
@@ -137,6 +137,10 @@ int main(int argc, char *argv[])
     pid = fork();
     if (pid < 0)
     {
+        close(minero_escribe[0]);
+        close(minero_escribe[1]);
+        close(registrador_escribe[0]);
+        close(registrador_escribe[1]);
         perror("Error en el fork\n");
         return EXIT_FAILURE;
     }
@@ -148,8 +152,8 @@ int main(int argc, char *argv[])
 
 
         sprintf(buffer, "%jd.log", (intmax_t)getppid());
-        /*Se cierran los pipes que no necesitaremos y se abre el descriptor de fichero donde escribiremos los resultados*/
 
+        /*Se cierran los pipes que no necesitaremos y se abre el descriptor de fichero donde escribiremos los resultados*/
         close(minero_escribe[1]);      /*minero escribe (write) */
         close(registrador_escribe[0]); /*registrador escribe (read) */
 
@@ -189,6 +193,7 @@ int main(int argc, char *argv[])
         }
         close(minero_escribe[0]);
         close(registrador_escribe[1]);
+        close(fd);
         printf("Register exited with status 0\n");
         exit(EXIT_SUCCESS);
     }
@@ -206,9 +211,25 @@ int main(int argc, char *argv[])
         arg_array = (ArgsSolucion **)malloc(sizeof(ArgsSolucion *) * n_threads);
         thread_array = (pthread_t *)malloc(sizeof(pthread_t) * n_threads);
 
+        if(!arg_array || !thread_array){
+            if(arg_array) free(arg_array);
+            if(thread_array) free(thread_array);
+            close(minero_escribe[1]);
+            close(registrador_escribe[0]);
+            wait(NULL);
+            exit(EXIT_FAILURE);
+        }
+
         for (i = 0; i < n_threads; i++)
         {
             arg_array[i] = (ArgsSolucion *)malloc(sizeof(ArgsSolucion));
+            if(!arg_array[i]){
+                close(minero_escribe[1]);
+                close(registrador_escribe[0]);
+                clean_and_free(n_threads, arg_array, thread_array);
+                wait(NULL);
+                exit(EXIT_FAILURE);
+            }
             arg_array[i]->n_valores = interval;
             arg_array[i]->n_hilo = i;
             arg_array[i]->p_finished = &finished;
@@ -238,6 +259,7 @@ int main(int argc, char *argv[])
                     free(thread_array);
 
                     close(minero_escribe[1]);
+                    close(registrador_escribe[0]);
                     wait(NULL);
                     printf("Miner exited with status 1\n");
                     exit(EXIT_FAILURE);
@@ -272,6 +294,8 @@ int main(int argc, char *argv[])
             /**Leemos la señal del registrador para continuar con la siguiente ronda */
             if (read(registrador_escribe[0], buffer, sizeof(buffer)) <= 0)
             {
+                close(minero_escribe[1]);
+                close(registrador_escribe[0]);
                 clean_and_free(n_threads, arg_array, thread_array);
                 printf("Miner exited with status 0\n");
                 wait(NULL);
@@ -282,6 +306,7 @@ int main(int argc, char *argv[])
 
         /**Numero de rondas terminado, mandamos señal de final y liberamos memoria */
         close(minero_escribe[1]);
+        close(registrador_escribe[0]);
         clean_and_free(n_threads, arg_array, thread_array);
         wait(NULL);
         printf("Miner exited with status 0\n");
