@@ -3,9 +3,8 @@ program=miner
 CC = gcc
 CFLAGS = -ansi -pedantic -Wall -g
 
-TARGET = 40
-ROUNDS = 50
-THREADS = 5
+N_THREADS = 40
+N_SECS = 5
 
 all: $(program) 
 
@@ -37,7 +36,8 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 run:
-	./miner $(TARGET) $(ROUNDS) $(THREADS)
+	./miner $(N_SECS) $(N_THREADS)
+	./miner $(N_SECS) $(N_THREADS)
 
 runv:
 	valgrind --leak-check=full --track-origins=yes -s ./miner $(TARGET) $(ROUNDS) $(THREADS)
