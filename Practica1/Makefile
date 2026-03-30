@@ -36,8 +36,14 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 run:
-	./miner $(N_SECS) $(N_THREADS)
-	./miner $(N_SECS) $(N_THREADS)
+	rm -f *.pid
+	rm -f *.log
+	./miner 8 $(N_THREADS) & ./miner 15 $(N_THREADS)
 
 runv:
-	valgrind --leak-check=full --track-origins=yes -s ./miner $(TARGET) $(ROUNDS) $(THREADS)
+	rm *.pid
+	rm *.log
+	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & \\
+		\\ valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
+
+
