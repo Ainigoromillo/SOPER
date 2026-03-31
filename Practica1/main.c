@@ -8,15 +8,20 @@
  * @date 2026-02-28
  *
  */
+/* Expose POSIX APIs such as sigprocmask and SIG_BLOCK */
+#define _POSIX_C_SOURCE 200809L
+
 #include "pow.h"
 #include <fcntl.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -52,7 +57,13 @@
 int terminar = 0;
 
 /**Función responsable de gestionar la llegada de señales SIGALRM*/
-void handler(int sig) { terminar = 1; }
+void handler_alarm(int sig) { terminar = 1; }
+
+/**Función responsable de gestionar la llegada de señales SIGUSR1*/
+void handler_sigusr1(int sig) { }
+
+/**Función responsable de gestionar la llegada de señales SIGUSR2*/
+void handler_sigusr2(int sig) { }
 
 /**
  * @brief Estructura que almacena la información que deben recibir los hilos
@@ -76,15 +87,17 @@ typedef struct {
 /**
  * @brief Funcion con la cual el minero que lidere iniciará la carrera
  */
-void start_race(){
+void start_race(int caller_pid){
   FILE *f=NULL;
   char buffer[MAX_BUFFER];
+  int pid;
   if (!(f = fopen(FICHERO_SISTEMA, "r"))) {
       perror("fopen fichero sistema");
       exit(EXIT_FAILURE);;
   }
   while(fgets(buffer, MAX_BUFFER, f)){
-    kill(atoi(buffer), SIGUSR1);
+    pid = atoi(buffer);
+    if(pid != caller_pid) kill((pid_t)pid, SIGUSR1);
   }
   fclose(f);
 
@@ -93,15 +106,17 @@ void start_race(){
 /**
  * @brief Funcion con la cual el minero que lidere iniciará la votacion
  */
-void start_votation(){
+void start_votation(int caller_pid){
   FILE *f=NULL;
   char buffer[MAX_BUFFER];
+  int pid;
   if (!(f = fopen(FICHERO_SISTEMA, "r"))) {
       perror("fopen fichero sistema");
       exit(EXIT_FAILURE);;
   }
   while(fgets(buffer, MAX_BUFFER, f)){
-    kill(atoi(buffer), SIGUSR2);
+    pid = atoi(buffer);
+    if(pid != caller_pid) kill((pid_t)pid, SIGUSR2);
   }
   fclose(f);
 
@@ -130,7 +145,6 @@ void inscribirseLista(int pid){
 void desinscribirseLista(int pid){
   FILE *f=NULL;
   FILE *f2=NULL;
-  int n_linea_a_borrar = 0;
   int read_pid = 0;
   char buffer[MAX_BUFFER];
   if (!(f = fopen(FICHERO_SISTEMA, "r"))) {
@@ -250,7 +264,7 @@ void *buscar_solucion(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
-  long n_rounds = 0, pid = 0;
+  long pid = 0;
   int i = 0, j = 0, k = 0;
   long interval = 0;
   int n_secs = 0;
@@ -266,8 +280,7 @@ int main(int argc, char *argv[]) {
   sem_t *mutex_pids = NULL;
   sem_t *mutex_target = NULL;
   sem_t *ganador_sem = NULL;
-  sigset_t origMask, blockMask;
-  FILE *f = NULL;
+  sigset_t origMask, block2mask, block1mask;
   int n_miners;
   int ganador = 0;
   int target;
@@ -278,10 +291,15 @@ int main(int argc, char *argv[]) {
   char *status = NULL;
 
   char buffer[1024];
-  struct sigaction act;
+  struct sigaction act_alarm, act_sigusr1, act_sigusr2;
 
   pthread_t h, *thread_array = NULL;
   ArgsSolucion *a = NULL, **arg_array = NULL;
+
+  /*Descomentar este código solo si se sospecha que pueda haber algún semáforo en el sistema que no se haya borrado correctamente*/
+  // sem_unlink(GANADOR_SEM);
+  // sem_unlink(MUTEX_PIDS_SEM_NAME);
+  // sem_unlink(MUTEX_TARGET_SEM_NAME);
 
   /*Tratamiento de los argumentos de entrada*/
   if (argc != 3) {
@@ -298,6 +316,19 @@ int main(int argc, char *argv[]) {
   /*Apertura del pipe*/
   pipe(minero_escribe);
   pipe(registrador_escribe);
+
+  /*Aplicamos la máscara que será empleada por los mineros*/
+  /*Bloqueamos la señal 1, pues será la que podrán recibir los mineros que no lideren las carreras*/
+  sigemptyset(&block1mask);
+  sigaddset(&block1mask, SIGUSR1);
+  if (sigprocmask(SIG_BLOCK, &block1mask, &origMask) == -1){
+    perror("sigprocmask");
+  }
+  /*Preparamos la máscara que aplicaremos una vez comience la carrera para que los mineros perdedores puedan votar*/
+  sigemptyset(&block2mask);
+  sigaddset(&block2mask, SIGUSR2);
+
+  
 
   /*División de los procesos*/
   pid = fork();
@@ -361,21 +392,41 @@ int main(int argc, char *argv[]) {
   }
   /*Proceso padre: minero*/
   else {
-    // Configuramos la señal
-    act.sa_handler = handler;
-    sigemptyset(&(act.sa_mask));
-    act.sa_flags = 0;
+    // Configuramos la señal de alarma
+    act_alarm.sa_handler = handler_alarm;
+    sigemptyset(&(act_alarm.sa_mask));
+    act_alarm.sa_flags = 0;
 
-    if (sigaction(SIGALRM, &act, NULL) < 0) {
+    if (sigaction(SIGALRM, &act_alarm, NULL) < 0) {
       perror(" sigaction ");
       exit(EXIT_FAILURE);
     }
     // Iniciamos la cuenta con la alarma
     alarm(n_secs);
+    
+    // Configuramos el manejador para sigursr1
+    act_sigusr1.sa_handler = handler_sigusr1;
+    sigemptyset(&(act_sigusr1.sa_mask));
+    act_sigusr1.sa_flags = 0;
+
+    if (sigaction(SIGUSR1, &act_sigusr1, NULL) < 0) {
+      perror(" sigaction ");
+      exit(EXIT_FAILURE);
+    }
+
+    // Configuramos el manejador para sigursr2
+    act_sigusr2.sa_handler = handler_sigusr2;
+    sigemptyset(&(act_sigusr2.sa_mask));
+    act_sigusr2.sa_flags = 0;
+
+    if (sigaction(SIGUSR1, &act_sigusr2, NULL) < 0) {
+      perror(" sigaction ");
+      exit(EXIT_FAILURE);
+    }
 
     /**Se cierran pipes pertinentes*/
-    close(registrador_escribe[1]); /*registrador escribe (escritura)*/
-    close(minero_escribe[0]);      /*minero escribe (lectura)*/
+    // close(registrador_escribe[1]); /*registrador escribe (escritura)*/
+    // close(minero_escribe[0]);      /*minero escribe (lectura)*/
 
     /*Accedemos al fichero de los pids*/
     if ((mutex_pids = sem_open(MUTEX_PIDS_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
@@ -431,12 +482,17 @@ int main(int argc, char *argv[]) {
       perror("sem_open");
       exit(EXIT_FAILURE);
     }
-    sem_wait(mutex_target); /*Accedemos a sección crítica: el fichero del target*/
-    ret_int = leer_target(); 
+    sem_wait(mutex_target); 
+    target = leer_target(); 
     /*Si no hay un target, lo añadimos nosotros y somos nosotros los que iniciamos la primera carrera*/
-    if(ret_int == ERR){
+    if(target == ERR){
       new_target(0);
+      target = 0;
       ganador = 1;
+      /**Como este proceso es el primero, no recibirá SIGUSR1 sino que directamente podrá recibir SIGUSR2 para la votación*/
+      if (sigprocmask(SIG_BLOCK, &block2mask, &block1mask) == -1){
+        perror("sigsuspend");
+      }  
     }
     sem_post(mutex_target);
 
@@ -444,20 +500,18 @@ int main(int argc, char *argv[]) {
     /*Ejecutamos el código del minero*/
     while (terminar == 0) {
       if(ganador == 1){
-        start_race();
+        start_race(getpid());
       }else{
-        sigemptyset(&blockMask);
-        sigaddset(&blockMask, SIGUSR1);
-        if (sigprocmask(SIG_BLOCK, &blockMask, &origMask) == -1){
-          perror("sigprocmask");
-        }
-        if (sigsuspend(&origMask) == -1){
+        /*Esperamos a recibir la señal de comienzo de la carrera*/
+        /*Aplicamos la máscara que bloqueará la señal dos, que es la que los mineros que pierdan aplicarán posteriormente*/
+        /*Le pasamos así una máscara en la que no aparece SIGUSR1 para que el prceso se desbloquee con dicha señal*/
+        if (sigsuspend(&block2mask) == -1){
           perror("sigsuspend");
-        }
+        }  
       }
       for (j = 0; j < n_threads; j++) {
         /*Preparar el argumento del hilo*/
-        arg_array[j]->target = 0;
+        arg_array[j]->target = target;
 
         /*Lanzamos el hilo*/
         error = pthread_create(&h, NULL, buscar_solucion, (void *)arg_array[j]);
@@ -496,17 +550,17 @@ int main(int argc, char *argv[]) {
       ret_int = sem_trywait(ganador_sem);
       if(ret_int == 0){
         /*El proceso es el ganador*/
+        printf("Soy el ganador!");
         new_target(solution);
-        start_votation();
+        start_votation(getpid());
+        /*Esperamos a que todos los procesos voten*/
+        sem_post(ganador_sem);
       }
       else{
+        perror("sem_trywait");
+        printf("Tengo que esperar al ganador!");
         ganador = 0;
-        sigemptyset(&blockMask);
-        sigaddset(&blockMask, SIGUSR2);
-        if (sigprocmask(SIG_BLOCK, &blockMask, &origMask) == -1){
-          perror("sigprocmask");
-        }
-        if (sigsuspend(&origMask) == -1){
+        if (sigsuspend(&block1mask) == -1){
           perror("sigsuspend");
         }
       }
@@ -539,15 +593,14 @@ int main(int argc, char *argv[]) {
     //   }
     //   finished = 0;
     // }
-
-    /*Finalización del proceso*/
-    sleep(15);
+    }
     /**Numero de rondas terminado, nos desapuntamos de la lista, mandamos señal de final y liberamos memoria*/
     sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
     desinscribirseLista(getpid());
     sem_post(mutex_pids);
     sem_close(mutex_pids);
     sem_close(mutex_target);
+    sem_close(ganador_sem);
 
     close(minero_escribe[1]);
     close(registrador_escribe[0]);
@@ -555,8 +608,8 @@ int main(int argc, char *argv[]) {
     wait(NULL);
     sem_unlink(MUTEX_PIDS_SEM_NAME);
     sem_unlink(MUTEX_TARGET_SEM_NAME);
+    sem_unlink(GANADOR_SEM);
     printf("Miner exited with status 0\n");
-  }
-  return EXIT_SUCCESS;
+    return EXIT_SUCCESS;
   }
 }

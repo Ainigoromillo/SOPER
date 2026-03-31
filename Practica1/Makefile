@@ -1,28 +1,29 @@
 objects=main.o pow.o
 program=miner
 CC = gcc
-CFLAGS = -ansi -pedantic -Wall -g
+#CFLAGS = -ansi -pedantic -Wall -g
+CFLAGS = -Wall -g
 
-N_THREADS = 40
+N_THREADS = 10
 N_SECS = 5
 
 all: $(program) 
 
 
 miner: $(objects)
-	$(CC) -o $@ $^ -lpthread
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
 minerRapido: mainRapido.o pow.o
-	$(CC) -o $@ $^c-lpthread
+	$(CC) $(CFLAGS) -o $@ $^c-lpthread
 
 mainRapido: mainRapido.c
-	$(CC) -o $@ -c $<
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 main.o: main.c
-	$(CC) -o $@ -c $< 
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 pow.o: pow.c
-	$(CC) -o $@ -c $< 
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 
 .PHONY: clean cleanLog run all
