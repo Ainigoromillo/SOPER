@@ -1,29 +1,29 @@
 objects=main.o pow.o
 program=miner
 CC = gcc
-CFLAGS = -ansi -pedantic -Wall -g
+#CFLAGS = -ansi -pedantic -Wall -g
+CFLAGS = -Wall -g
 
-TARGET = 40
-ROUNDS = 50
-THREADS = 5
+N_THREADS = 10
+N_SECS = 5
 
 all: $(program) 
 
 
 miner: $(objects)
-	$(CC) -o $@ $^ -lpthread
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
 minerRapido: mainRapido.o pow.o
-	$(CC) -o $@ $^c-lpthread
+	$(CC) $(CFLAGS) -o $@ $^c-lpthread
 
 mainRapido: mainRapido.c
-	$(CC) -o $@ -c $<
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 main.o: main.c
-	$(CC) -o $@ -c $< 
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 pow.o: pow.c
-	$(CC) -o $@ -c $< 
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 
 .PHONY: clean cleanLog run all
@@ -37,7 +37,14 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 run:
-	./miner $(TARGET) $(ROUNDS) $(THREADS)
+	rm -f *.pid
+	rm -f *.log
+	./miner 8 $(N_THREADS) & ./miner 15 $(N_THREADS)
 
 runv:
-	valgrind --leak-check=full --track-origins=yes --track-fds=yes -s ./miner $(TARGET) $(ROUNDS) $(THREADS)
+	rm *.pid
+	rm *.log
+	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & \\
+		\\ valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
+
+
