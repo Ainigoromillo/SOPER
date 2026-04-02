@@ -40,4 +40,4 @@ run:
 	./miner $(TARGET) $(ROUNDS) $(THREADS)
 
 runv:
-	valgrind --leak-check=full --track-origins=yes -s ./miner $(TARGET) $(ROUNDS) $(THREADS)
+	valgrind --leak-check=full --track-origins=yes --track-fds=yes -s ./miner $(TARGET) $(ROUNDS) $(THREADS)
