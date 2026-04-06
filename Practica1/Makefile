@@ -4,7 +4,7 @@ CC = gcc
 #CFLAGS = -ansi -pedantic -Wall -g
 CFLAGS = -Wall -g
 
-N_THREADS = 10
+N_THREADS = 1
 N_SECS = 5
 
 all: $(program) 
@@ -28,7 +28,9 @@ pow.o: pow.c
 
 .PHONY: clean cleanLog run all
 clean:
-	rm *.o $(program) *.log
+	rm *.o $(program) 
+	rm -f *.pid
+	rm -f *.tgt
 
 cleanLog:
 	rm *.log
@@ -38,13 +40,12 @@ cleanRapido:
 
 run:
 	rm -f *.pid
-	rm -f *.log
-	./miner 8 $(N_THREADS) & ./miner 15 $(N_THREADS)
+	rm -f *.tgt
+	./miner 5 10 & ./miner 20 1 & ./miner 15 1
 
 runv:
 	rm *.pid
-	rm *.log
-	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & \\
-		\\ valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
+	rm -f *.tgt
+	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
 
 
