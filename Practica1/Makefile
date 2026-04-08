@@ -39,13 +39,10 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 run:
-	rm -f *.pid
-	rm -f *.tgt
-	./miner 5 10 & ./miner 20 1 & ./miner 15 1
+	./miner 2 10 & ./miner 4 1 & ./miner 3 1
 
 runv:
-	rm *.pid
-	rm -f *.tgt
+
 	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
 
 

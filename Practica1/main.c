@@ -28,9 +28,9 @@
 #include <stdatomic.h>
 
 atomic_int finished = 0; // Variable global compartida por los hilos
-#define ERR -1
+#define NO_TARGET -1
 #define MAX_BUFFER 20
-#define MAX_INTENTOS 35 // El numero maximo de esperas que hace el proceso ganador a que los demas voten
+#define MAX_INTENTOS 100 // El numero maximo de esperas que hace el proceso ganador a que los demas voten
 #define YES "Yes\n"
 #define NO "No\n"
 #define MUTEX_PIDS_SEM_NAME "/mutex_pids_sem"
@@ -56,20 +56,23 @@ atomic_int finished = 0; // Variable global compartida por los hilos
   -1 /**Valor que devuelven los hilos si no han encontrado una solución para \
         el target */
 
-/**En esta iteración, determinaremos que una solución será rechazada si es
- * múltiplo de diez. Este criterio será modificado en iteraciones futuras */
-#define VALIDATE(solution) ((solution) % 10 == 0 ? (0) : (1))
+// Condicion de solucion correcta, por ahora tiene una probabilidad de 75% de validarse
+#define VALIDATE(solution) (rand() % 4 != 0)
 
 /**Variable que indica si el minero ha recibido la señal que indica que ha
  * terminado su tiempo*/
 int terminar = 0;
 
 /**Función responsable de gestionar la llegada de señales SIGALRM*/
-void handler_alarm(int sig) { terminar = 1;
-  printf("Alarma sonada para el proceso: %d\n", getpid()); }
+void handler_alarm(int sig)
+{
+  terminar = 1;
+}
 
 /**Función responsable de gestionar la llegada de señales SIGUSR1*/
-void handler_sigusr1(int sig) {}
+void handler_sigusr1(int sig)
+{
+}
 
 /**Función responsable de gestionar la llegada de señales SIGUSR2*/
 void handler_sigusr2(int sig)
@@ -106,7 +109,7 @@ void start_race(int caller_pid)
   int pid;
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema start race");
     exit(EXIT_FAILURE);
     ;
   }
@@ -129,7 +132,7 @@ void start_votation(int caller_pid)
   int pid;
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema votacion");
     exit(EXIT_FAILURE);
     ;
   }
@@ -149,13 +152,30 @@ void start_votation(int caller_pid)
 void inscribirseLista(int pid)
 {
   FILE *f = NULL;
+  int read_pid = 0;
+
+  char buffer[MAX_BUFFER];
   if (!(f = fopen(FICHERO_SISTEMA, "a")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema inscribirse");
     exit(EXIT_FAILURE);
   }
   /*Nos apuntamos en la lista de pid's*/
   fprintf(f, "%d\n", pid);
+  printf("miner <%d> added to the system\n", getpid());
+  fclose(f);
+
+  // Imprimimos todos los mineros del sistema como se pide en el enunciado
+  if (!(f = fopen(FICHERO_SISTEMA, "r")))
+  {
+    perror("fopen fichero sistema inscribirse");
+    exit(EXIT_FAILURE);
+  }
+  while (fgets(buffer, MAX_BUFFER, f))
+  {
+    read_pid = atoi(buffer);
+    printf("<%d>\n", read_pid);
+  }
   fclose(f);
 }
 
@@ -170,7 +190,7 @@ void votar(int solution)
 
   if (!(f = fopen(FICHERO_VOTACION, "a")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema votar");
     exit(EXIT_FAILURE);
   }
   // comprobamos la solucion
@@ -194,17 +214,20 @@ void desinscribirseLista(int pid)
   FILE *f = NULL;
   FILE *f2 = NULL;
   int read_pid = 0;
+
   char buffer[MAX_BUFFER];
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema desinscribirse");
     exit(EXIT_FAILURE);
   }
   if (!(f2 = fopen(FICHERO_SISTEMA_TEMP, "w")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema temp");
     exit(EXIT_FAILURE);
   }
+
+  printf("miner <%d> exited the system\n", getpid());
   /*Vamos copiando las lineas una a una salvo aquella que queremos eliminar*/
   while (fgets(buffer, MAX_BUFFER, f))
   {
@@ -212,8 +235,11 @@ void desinscribirseLista(int pid)
     if (read_pid != pid)
     {
       fprintf(f2, "%d\n", read_pid);
+      // imprimimos los mineros que quedan en el sistema
+      printf("<%d>\n", read_pid);
     }
   }
+
   fclose(f);
   fclose(f2);
   /*Borramos el archivo original y al archivo temporal le damos el nombre del original*/
@@ -230,7 +256,7 @@ void new_target(int target)
 
   if (!(f = fopen(FICHERO_TARGET, "w+")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero target new target");
     exit(EXIT_FAILURE);
   }
   fprintf(f, "%d\n", target);
@@ -247,11 +273,12 @@ int leer_target()
   char buffer[MAX_BUFFER];
   if (!(f = fopen(FICHERO_TARGET, "r")))
   {
-    return ERR;
+    return NO_TARGET;
   }
-  if(!fgets(buffer, MAX_BUFFER, f)){
+  if (!fgets(buffer, MAX_BUFFER, f))
+  {
     fclose(f);
-    return ERR;
+    return NO_TARGET;
   }
 
   ret = atoi(buffer);
@@ -273,7 +300,7 @@ int count_players(sem_t *mutex_pids)
   sem_wait(mutex_pids);
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero sistema count players");
     exit(EXIT_FAILURE);
   }
   while (fgets(buffer, MAX_BUFFER, f))
@@ -292,9 +319,9 @@ int count_players(sem_t *mutex_pids)
  *
  * @param mutex_votacion el mutex que protege el fichero en el que los procesos votan
  * @param mutex_pids el mutex que protege el fichero del sistema, donde los procesos se apuntan
- * @return int si el proceso ganador es aceptado o no
+ * @param yesNo el array donde la funcion guarda las votaciones
  */
-int wait_votation(sem_t *mutex_votacion, int corredores)
+void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
 {
   int i = 0;
   int votacionTerminada = 0;
@@ -302,11 +329,22 @@ int wait_votation(sem_t *mutex_votacion, int corredores)
 
   FILE *votacion = NULL;
   char buffer[MAX_BUFFER];
-  int yes = 0, no = 0;
+  yesNo[0] = 0;
+  yesNo[1] = 0;
+
   // definicion de la estructura para el wait corto
   struct timespec ts = {
       .tv_sec = 0,
       .tv_nsec = 10000000};
+
+  // Si no existe el fichero de votacion , lo creamos limpio
+  sem_wait(mutex_votacion);
+  if (!(votacion = fopen(FICHERO_VOTACION, "r")))
+  {
+    votacion = fopen(FICHERO_VOTACION, "w");
+  }
+  fclose(votacion);
+  sem_post(mutex_votacion);
 
   // eliminamos a uno de lo corredores, sera el propio ganador, que no vota
   corredores--;
@@ -318,7 +356,7 @@ int wait_votation(sem_t *mutex_votacion, int corredores)
     sem_wait(mutex_votacion);
     if (!(votacion = fopen(FICHERO_VOTACION, "r")))
     {
-      perror("fopen fichero sistema");
+      perror("fopen fichero votacion");
       exit(EXIT_FAILURE);
     }
     while (fgets(buffer, MAX_BUFFER, votacion))
@@ -337,31 +375,27 @@ int wait_votation(sem_t *mutex_votacion, int corredores)
   sem_wait(mutex_votacion);
   if (!(votacion = fopen(FICHERO_VOTACION, "r")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero votacion");
     exit(EXIT_FAILURE);
   }
   while (fgets(buffer, MAX_BUFFER, votacion))
   {
     if (!strcmp(buffer, YES))
-      yes++;
+      yesNo[0]++;
     else
-      no++;
+      yesNo[1]++;
   }
   fclose(votacion);
 
   // reseteamos las votaciones para la siguiente ronda borrando el fichero
   if (!(votacion = fopen(FICHERO_VOTACION, "w")))
   {
-    perror("fopen fichero sistema");
+    perror("fopen fichero votacion");
     exit(EXIT_FAILURE);
   }
   fclose(votacion);
 
   sem_post(mutex_votacion);
-  // Comparamos los YES NO para ver si aumentamos la moneda o no
-  if (yes >= no)
-    return 1;
-  return 0;
 }
 
 /**
@@ -386,10 +420,6 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array,
     free(thread_array);
   if (arg_array != NULL)
     free(arg_array);
-
-  sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
-  desinscribirseLista(getpid());
-  sem_post(mutex_pids);
 
   // cerramos los mutex
   sem_close(mutex_pids);
@@ -447,11 +477,7 @@ int main(int argc, char *argv[])
   long solution;
   void *retval = NULL;
   int ret_int;
-  // Descriptores para el pipe del registrador, no se usa en esta practica
-  // int minero_escribe[2];
-  // int registrador_escribe[2];
-  // char buffer[1024];
-  // int fd;
+  int yesNo[2];
   sem_t *mutex_pids = NULL;
   sem_t *mutex_target = NULL;
   sem_t *ganador_sem = NULL;
@@ -462,11 +488,6 @@ int main(int argc, char *argv[])
   int target;
   int rondas_ganadas = 0, rondas_verificadas = 0;
 
-  // char validado[] = "validated";
-  // char rejected[] = "rejected";
-  // char accepted[] = "accepted";
-  // char *status = NULL;
-
   struct timespec ts = {
       .tv_sec = 0,
       .tv_nsec = 10000000};
@@ -475,6 +496,19 @@ int main(int argc, char *argv[])
 
   pthread_t h, *thread_array = NULL;
   ArgsSolucion **arg_array = NULL;
+
+  // Semilla para el numero aleatorio utilizado en las votaciones
+  srand(time(NULL));
+
+  // Descriptores para el pipe del registrador, no se usa en esta practica
+  // int minero_escribe[2];
+  // int registrador_escribe[2];
+  // char buffer[1024];
+  // int fd;
+  // char validado[] = "validated";
+  // char rejected[] = "rejected";
+  // char accepted[] = "accepted";
+  // char *status = NULL;
 
   /*Tratamiento de los argumentos de entrada*/
   if (argc != 3)
@@ -504,9 +538,10 @@ int main(int argc, char *argv[])
   {
     perror("sigprocmask");
   }
-  /*Preparamos la máscara que aplicaremos una vez comience la carrera para que los mineros perdedores puedan votar*/
+  /*Preparamos la máscara que desbloquea SIGUSR1 y bloquea tanto SIGUSR2 como SIGALRM para comenzar la carrera*/
   sigemptyset(&block2mask);
   sigaddset(&block2mask, SIGUSR2);
+  sigaddset(&block2mask, SIGALRM);
 
   /*División de los procesos*/
   pid = fork();
@@ -570,7 +605,7 @@ int main(int argc, char *argv[])
     // close(registrador_escribe[1]);
     // close(fd);
     // printf("Register exited with status 0\n");
-    // exit(EXIT_SUCCESS);
+    exit(EXIT_SUCCESS);
   }
   /*Proceso padre: minero*/
   else
@@ -618,6 +653,7 @@ int main(int argc, char *argv[])
     // close(minero_escribe[0]);      /*minero escribe (lectura)*/
 
     /**Abrimos todos los semaforos para la ejecucion de las tareas coordinadas */
+
     if ((mutex_votacion = sem_open(MUTEX_VOTACION_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
         SEM_FAILED)
     {
@@ -663,12 +699,12 @@ int main(int argc, char *argv[])
 
     if (!arg_array || !thread_array)
     {
-      if (arg_array)
-        free(arg_array);
-      if (thread_array)
-        free(thread_array);
       // close(minero_escribe[1]);
       // close(registrador_escribe[0]);
+      sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
+      desinscribirseLista(getpid());
+      sem_post(mutex_pids);
+      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
       wait(NULL);
       exit(EXIT_FAILURE);
     }
@@ -679,7 +715,9 @@ int main(int argc, char *argv[])
       if (!arg_array[i])
       {
         // close(minero_escribe[1]);
-        // close(registrador_escribe[0]);
+        // close(registrador_escribe[0]);    sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
+        desinscribirseLista(getpid());
+        sem_post(mutex_pids);
         clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
         wait(NULL);
         exit(EXIT_FAILURE);
@@ -693,7 +731,7 @@ int main(int argc, char *argv[])
     sem_wait(mutex_target);
     target = leer_target();
     /*Si no hay un target, lo añadimos nosotros y somos nosotros los que iniciamos la primera carrera*/
-    if (target == ERR)
+    if (target == NO_TARGET)
     {
       new_target(0);
       target = 0;
@@ -717,7 +755,7 @@ int main(int argc, char *argv[])
         while (count_players(mutex_pids) < 2 && !terminar)
           nanosleep(&ts, NULL);
 
-          //el primer proceso ha muerto en la espera de otros corredores
+        // el primer proceso ha muerto en la espera de otros corredores
         if (terminar)
         {
           sem_wait(mutex_pids);
@@ -725,17 +763,24 @@ int main(int argc, char *argv[])
           sem_post(mutex_pids);
 
           // limpiamos ejecucion
+          unlink(FICHERO_SISTEMA);
+          unlink(FICHERO_TARGET);
+          unlink(FICHERO_VOTACION);
+
+          sem_unlink(MUTEX_PIDS_SEM_NAME);
+          sem_unlink(MUTEX_TARGET_SEM_NAME);
+          sem_unlink(GANADOR_SEM);
+          sem_unlink(MUTEX_VOTACION_SEM_NAME);
           clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
 
           // close(minero_escribe[1]);
           // close(registrador_escribe[0]);
           // clean_and_free(n_threads, arg_array, thread_array);
           wait(NULL);
-          printf("Miner exited with status 0\n");
+          printf("Miner exited while waiting\n");
           exit(EXIT_SUCCESS);
         }
         // empezamos al carrera
-        printf("empezando carrera: %d\n",getpid());
         start_race(getpid());
       }
       else
@@ -743,8 +788,9 @@ int main(int argc, char *argv[])
         /*Esperamos a recibir la señal de comienzo de la carrera*/
         /*Aplicamos la máscara que bloqueará la señal dos, que es la que los mineros que pierdan aplicarán posteriormente*/
         /*Le pasamos así una máscara en la que no aparece SIGUSR1 para que el prceso se desbloquee con dicha señal*/
-        sigsuspend(&block2mask);
 
+        // Este sigsuspend tambien detecta alarma, por lo que si a un proceso le suena, empezará a ejecutarse
+        sigsuspend(&block2mask);
       }
 
       /******************************/
@@ -804,7 +850,6 @@ int main(int argc, char *argv[])
       {
 
         // PROCESO GANADOR, MANDA SEÑAL A LOS PERDEDORES Y ESPERA A QUE VOTEN
-        printf("Soy el ganador!: %d\n", getpid());
         // mandamos señal a todos los demas procesos de terminar la carrera
         sem_wait(mutex_pids);
         start_votation(getpid());
@@ -814,19 +859,18 @@ int main(int argc, char *argv[])
         target = solution;
         sem_post(mutex_target);
         /*Esperamos a que todos los procesos voten*/
-        ret_int = wait_votation(mutex_votacion, n_miners);
+        wait_votation(mutex_votacion, n_miners, yesNo);
         // Sumamos a las rondas ganadas del minero y si gana la votacion sumamos a las rondas verificadas
         rondas_ganadas++;
-        if (ret_int)
+        if (yesNo[0] >= yesNo[1])
           rondas_verificadas++;
         ganador = 1;
+        printf("Winner <%d> Yes|No: (%d|%d) => %s\n", getpid(), yesNo[0], yesNo[1], yesNo[0] >= yesNo[1] ? "Accepted" : "Rejected");
         sem_post(ganador_sem);
       }
       else
       {
         // PROCESO PERDEDOR, ESPERA A CAMBIO DE TARGET Y VOTA
-        printf("Tengo que esperar al ganador!:%d\n", getpid());
-
         // leemos el nuevo target y hacemos votacion
 
         target = leer_target();
@@ -870,11 +914,34 @@ int main(int argc, char *argv[])
 
     /**********FINAL DE EJECUCION Y MUERTE DEL PROCESO**************/
 
+    // Si el proceso que sale es el ganador, procede a mandarle la señal de comienzo de la carrera a los demas corredores
+    // esto para evitar bloqueos
+    if (ganador == 1)
+    {
+      start_race(getpid());
+    }
+
     /**Numero de rondas terminado, nos desapuntamos de la lista, mandamos señal de final y liberamos memoria*/
 
     sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
     desinscribirseLista(getpid());
     sem_post(mutex_pids);
+
+    // El último minero en salir se encarga de eliminar el fichero del sistema, target y votaciones
+    // asi como borrar los semaforos correspondientes.
+    n_miners = count_players(mutex_pids);
+
+    if (n_miners == 0)
+    {
+      unlink(FICHERO_SISTEMA);
+      unlink(FICHERO_TARGET);
+      unlink(FICHERO_VOTACION);
+
+      sem_unlink(MUTEX_PIDS_SEM_NAME);
+      sem_unlink(MUTEX_TARGET_SEM_NAME);
+      sem_unlink(GANADOR_SEM);
+      sem_unlink(MUTEX_VOTACION_SEM_NAME);
+    }
 
     // limpiamos ejecucion
     clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
