@@ -39,7 +39,7 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 run:
-	./miner 2 10 & ./miner 4 1 & ./miner 3 1
+	./miner 3 10 & ./miner 2 1 & ./miner 2 1 & ./miner 2 1 & ./miner 2 1 & ./miner 2 1 & ./miner 2 1
 
 runv:
 

@@ -110,8 +110,7 @@ void start_race(int caller_pid)
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
     perror("fopen fichero sistema start race");
-    exit(EXIT_FAILURE);
-    ;
+    return;
   }
   while (fgets(buffer, MAX_BUFFER, f))
   {
@@ -133,8 +132,7 @@ void start_votation(int caller_pid)
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
     perror("fopen fichero sistema votacion");
-    exit(EXIT_FAILURE);
-    ;
+    return;
   }
   while (fgets(buffer, MAX_BUFFER, f))
   {
@@ -158,18 +156,17 @@ void inscribirseLista(int pid)
   if (!(f = fopen(FICHERO_SISTEMA, "a")))
   {
     perror("fopen fichero sistema inscribirse");
-    exit(EXIT_FAILURE);
+    return;
   }
   /*Nos apuntamos en la lista de pid's*/
   fprintf(f, "%d\n", pid);
-  printf("miner <%d> added to the system\n", getpid());
   fclose(f);
 
   // Imprimimos todos los mineros del sistema como se pide en el enunciado
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
     perror("fopen fichero sistema inscribirse");
-    exit(EXIT_FAILURE);
+    return;
   }
   while (fgets(buffer, MAX_BUFFER, f))
   {
@@ -177,6 +174,7 @@ void inscribirseLista(int pid)
     printf("<%d>\n", read_pid);
   }
   fclose(f);
+  printf("miner <%d> added to the system\n", pid);
 }
 
 /**
@@ -191,7 +189,7 @@ void votar(int solution)
   if (!(f = fopen(FICHERO_VOTACION, "a")))
   {
     perror("fopen fichero sistema votar");
-    exit(EXIT_FAILURE);
+    return;
   }
   // comprobamos la solucion
   if (VALIDATE(solution))
@@ -219,15 +217,14 @@ void desinscribirseLista(int pid)
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
     perror("fopen fichero sistema desinscribirse");
-    exit(EXIT_FAILURE);
+    return;
   }
   if (!(f2 = fopen(FICHERO_SISTEMA_TEMP, "w")))
   {
     perror("fopen fichero sistema temp");
-    exit(EXIT_FAILURE);
+    return;
   }
 
-  printf("miner <%d> exited the system\n", getpid());
   /*Vamos copiando las lineas una a una salvo aquella que queremos eliminar*/
   while (fgets(buffer, MAX_BUFFER, f))
   {
@@ -245,6 +242,7 @@ void desinscribirseLista(int pid)
   /*Borramos el archivo original y al archivo temporal le damos el nombre del original*/
   remove(FICHERO_SISTEMA);
   rename(FICHERO_SISTEMA_TEMP, FICHERO_SISTEMA);
+  printf("miner <%d> exited the system\n", pid);
 }
 
 /**
@@ -291,23 +289,23 @@ int leer_target()
  *
  * @return int el numero de corredores apuntados
  */
-int count_players(sem_t *mutex_pids)
+int count_players()
 {
   FILE *f = NULL;
   char buffer[MAX_BUFFER];
   int players = 0;
 
-  sem_wait(mutex_pids);
   if (!(f = fopen(FICHERO_SISTEMA, "r")))
   {
     perror("fopen fichero sistema count players");
-    exit(EXIT_FAILURE);
+
+    return -1;
   }
+
   while (fgets(buffer, MAX_BUFFER, f))
     players++;
 
   fclose(f);
-  sem_post(mutex_pids);
 
   return players;
 }
@@ -705,6 +703,7 @@ int main(int argc, char *argv[])
       desinscribirseLista(getpid());
       sem_post(mutex_pids);
       clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+      printf("miner <%d> exited with status 1\n", getpid());
       wait(NULL);
       exit(EXIT_FAILURE);
     }
@@ -715,10 +714,12 @@ int main(int argc, char *argv[])
       if (!arg_array[i])
       {
         // close(minero_escribe[1]);
-        // close(registrador_escribe[0]);    sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
+        // close(registrador_escribe[0]);/*Accedemos a sección crítica: el fichero de pid's*/    
+        sem_wait(mutex_pids);
         desinscribirseLista(getpid());
         sem_post(mutex_pids);
         clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+        printf("miner <%d> exited with status 1\n", getpid());
         wait(NULL);
         exit(EXIT_FAILURE);
       }
@@ -752,17 +753,29 @@ int main(int argc, char *argv[])
       if (ganador)
       {
         // El proceso ganador (o el primero que llegue), espera a que haya mas jugadores esperando para correr
-        while (count_players(mutex_pids) < 2 && !terminar)
+        sem_wait(mutex_pids);
+        n_miners = count_players();
+        sem_post(mutex_pids);
+        while (n_miners < 2 && !terminar)
+        {
           nanosleep(&ts, NULL);
-
+          sem_wait(mutex_pids);
+          n_miners = count_players();
+          sem_post(mutex_pids);
+        }
         // el primer proceso ha muerto en la espera de otros corredores
-        if (terminar)
+        if(terminar) continue;
+        /*if (terminar)
         {
           sem_wait(mutex_pids);
           desinscribirseLista(getpid());
-          sem_post(mutex_pids);
 
+
+          n_miners = count_players();
+          sem_post(mutex_pids);
+          if(n_miners == 0){
           // limpiamos ejecucion
+          printf("eliminando ficheros <%d>\n",getpid());
           unlink(FICHERO_SISTEMA);
           unlink(FICHERO_TARGET);
           unlink(FICHERO_VOTACION);
@@ -771,17 +784,20 @@ int main(int argc, char *argv[])
           sem_unlink(MUTEX_TARGET_SEM_NAME);
           sem_unlink(GANADOR_SEM);
           sem_unlink(MUTEX_VOTACION_SEM_NAME);
+          }
           clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
 
           // close(minero_escribe[1]);
           // close(registrador_escribe[0]);
           // clean_and_free(n_threads, arg_array, thread_array);
           wait(NULL);
-          printf("Miner exited while waiting\n");
+          printf("Miner <%d> exited while waiting\n", getpid());
           exit(EXIT_SUCCESS);
-        }
+        }*/
         // empezamos al carrera
+        sem_wait(mutex_pids);
         start_race(getpid());
+        sem_post(mutex_pids);
       }
       else
       {
@@ -798,8 +814,10 @@ int main(int argc, char *argv[])
       /******************************/
 
       // Nos guardamos el numero de mineros que compiten en esta ronda, para esperar en la votacion
-      n_miners = count_players(mutex_pids);
 
+        sem_wait(mutex_pids);
+        n_miners = count_players();
+        sem_post(mutex_pids);
       for (j = 0; j < n_threads; j++)
       {
         /*Preparar el argumento del hilo*/
@@ -823,7 +841,7 @@ int main(int argc, char *argv[])
           // close(minero_escribe[1]);
           // close(registrador_escribe[0]);
           wait(NULL);
-          printf("Miner exited with status 1\n");
+          printf("Miner <%d> exited with status 1\n", getpid());
           exit(EXIT_FAILURE);
         }
         thread_array[j] = h;
@@ -872,7 +890,6 @@ int main(int argc, char *argv[])
       {
         // PROCESO PERDEDOR, ESPERA A CAMBIO DE TARGET Y VOTA
         // leemos el nuevo target y hacemos votacion
-
         target = leer_target();
         sem_post(mutex_target);
 
@@ -918,21 +935,27 @@ int main(int argc, char *argv[])
     // esto para evitar bloqueos
     if (ganador == 1)
     {
+      sem_wait(mutex_pids);
       start_race(getpid());
+      sem_post(mutex_pids);
     }
 
     /**Numero de rondas terminado, nos desapuntamos de la lista, mandamos señal de final y liberamos memoria*/
 
     sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
     desinscribirseLista(getpid());
-    sem_post(mutex_pids);
+
 
     // El último minero en salir se encarga de eliminar el fichero del sistema, target y votaciones
     // asi como borrar los semaforos correspondientes.
-    n_miners = count_players(mutex_pids);
 
+    n_miners = count_players();
+
+    sem_post(mutex_pids); //Vemos que la seccion critica unifica desinscribirse y countplayers. Esto soluciona el caso de que dos se desapunten y lean 0 personas a la vez
+                          //Cuando el primero en desapuntarse deberia haber leido que quedaba uno
     if (n_miners == 0)
     {
+      printf("eliminando ficheros <%d>\n",getpid());
       unlink(FICHERO_SISTEMA);
       unlink(FICHERO_TARGET);
       unlink(FICHERO_VOTACION);
@@ -950,7 +973,7 @@ int main(int argc, char *argv[])
     // close(registrador_escribe[0]);
     // clean_and_free(n_threads, arg_array, thread_array);
     wait(NULL);
-    printf("Miner exited with status 0\n");
+    printf("Miner <%d> exited with status 0\n", getpid());
     return EXIT_SUCCESS;
   }
 }
