@@ -27,7 +27,7 @@
 #include <unistd.h>
 #include <stdatomic.h>
 
-atomic_int finished = 0; // Variable global compartida por los hilos
+atomic_int finished = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
 #define NO_TARGET -1
 #define MAX_BUFFER 20
 #define MAX_INTENTOS 100 // El numero maximo de esperas que hace el proceso ganador a que los demas voten
@@ -385,7 +385,7 @@ void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
   }
   fclose(votacion);
 
-  // reseteamos las votaciones para la siguiente ronda borrando el fichero
+  // reseteamos las votaciones para la siguiente ronda truncando el fichero
   if (!(votacion = fopen(FICHERO_VOTACION, "w")))
   {
     perror("fopen fichero votacion");
@@ -424,6 +424,14 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array,
   sem_close(mutex_target);
   sem_close(ganador_sem);
   sem_close(mutex_votacion);
+}
+
+
+void unlink_semaphores(){
+  sem_unlink(MUTEX_PIDS_SEM_NAME);
+  sem_unlink(MUTEX_TARGET_SEM_NAME);
+  sem_unlink(MUTEX_VOTACION_SEM_NAME);
+  sem_unlink(GANADOR_SEM);
 }
 
 /**
@@ -484,8 +492,9 @@ int main(int argc, char *argv[])
   int n_miners;
   int ganador = 0;
   int target;
-  int rondas_ganadas = 0, rondas_verificadas = 0;
-
+  int rondas_ganadas = 0, rondas_verificadas = 0, rondas_corridas = 0;
+  
+  /**Estructura para el nanosleep*/
   struct timespec ts = {
       .tv_sec = 0,
       .tv_nsec = 10000000};
@@ -498,15 +507,15 @@ int main(int argc, char *argv[])
   // Semilla para el numero aleatorio utilizado en las votaciones
   srand(time(NULL));
 
-  // Descriptores para el pipe del registrador, no se usa en esta practica
-  // int minero_escribe[2];
-  // int registrador_escribe[2];
-  // char buffer[1024];
-  // int fd;
-  // char validado[] = "validated";
-  // char rejected[] = "rejected";
-  // char accepted[] = "accepted";
-  // char *status = NULL;
+  // Descriptores para el pipe del registrador
+  int minero_escribe[2];
+  int registrador_escribe[2];
+  char buffer[1024];
+  int fd;
+  char validado[] = "validated";
+  char rejected[] = "rejected";
+  char accepted[] = "accepted";
+  char *status = NULL;
 
   /*Tratamiento de los argumentos de entrada*/
   if (argc != 3)
@@ -522,10 +531,10 @@ int main(int argc, char *argv[])
     printf("Argumentos erróneos");
     exit(EXIT_FAILURE);
   }
-  /*Apertura del pipe, en esta practica no se usa el registrador
+  /*Apertura del pipe*/
   pipe(minero_escribe);
   pipe(registrador_escribe);
-  */
+  
 
   /*Aplicamos la máscara que será empleada por los mineros*/
   /*Bloqueamos la señal 1, pues será la que podrán recibir los mineros que no lideren las carreras
@@ -546,10 +555,10 @@ int main(int argc, char *argv[])
   if (pid < 0)
   {
 
-    // close(minero_escribe[0]);
-    // close(minero_escribe[1]);
-    // close(registrador_escribe[0]);
-    // close(registrador_escribe[1]);
+    close(minero_escribe[0]);
+    close(minero_escribe[1]);
+    close(registrador_escribe[0]);
+    close(registrador_escribe[1]);
 
     perror("Error en el fork\n");
     return EXIT_FAILURE;
@@ -557,52 +566,60 @@ int main(int argc, char *argv[])
   /*Proceso hijo: registrador*/
   if (pid == 0)
   {
-    // int round;
-    // char *pointer;
-    //
-    // sprintf(buffer, "%jd.log", (intmax_t)getppid());
-    //
-    // /*Se cierran los pipes que no necesitaremos y se abre el descriptor de
-    //  * fichero donde escribiremos los resultados*/
-    // close(minero_escribe[1]);      /*minero escribe (write) */
-    // close(registrador_escribe[0]); /*registrador escribe (read) */
-    //
-    // if ((fd = open(buffer, O_CREAT | O_TRUNC | O_RDWR,
-    //                S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)) == -1) {
-    //   perror("open");
-    //   close(minero_escribe[0]);
-    //   close(registrador_escribe[1]);
-    //
-    //   printf("Register exited with status 1\n");
-    //   exit(EXIT_FAILURE);
-    // }
-    //
-    // while (read(minero_escribe[0], buffer, sizeof(buffer)) > 0) {
-    //
-    //   pointer = strtok(buffer, "|\n\r");
-    //   round = atoi(pointer) + 1;
-    //   pointer = strtok(NULL, "|\n\r");
-    //   solution = atol(pointer);
-    //   status = strtok(NULL, "|\n\r");
-    //
-    //   /*Escribe los resultados en el fichero*/
-    //   dprintf(fd,
-    //           "Id:%d \n"
-    //           "Winner:%jd \n"
-    //           "Target:%ld \n"
-    //           "Solution: %ld (%s)\n"
-    //           "Votes: %d/%d \n"
-    //           "Wallets: %jd:%d\n\n",
-    //           round, (intmax_t)getppid(), solution, status, round, round,
-    //           (intmax_t)getppid(), round);
-    //
-    //   /**Manda señal de que ya ha escrito en el fichero */
-    //   write(registrador_escribe[1], buffer, strlen(buffer) + 1);
-    // }
-    // close(minero_escribe[0]);
-    // close(registrador_escribe[1]);
-    // close(fd);
-    // printf("Register exited with status 0\n");
+    int round;
+    char *pointer;
+
+    sprintf(buffer, "%jd.log", (intmax_t)getppid());
+
+    /*Se cierran los pipes que no necesitaremos y se abre el descriptor de
+     * fichero donde escribiremos los resultados*/
+    close(minero_escribe[1]);      /*minero escribe (write) */
+    close(registrador_escribe[0]); /*registrador escribe (read) */
+
+    if ((fd = open(buffer, O_CREAT | O_TRUNC | O_RDWR,
+                   S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP)) == -1) {
+      perror("open");
+      close(minero_escribe[0]);
+      close(registrador_escribe[1]);
+
+      printf("Register exited with status 1\n");
+      exit(EXIT_FAILURE);
+    }
+
+    while (read(minero_escribe[0], buffer, sizeof(buffer)) > 0) {
+
+      pointer = strtok(buffer, "|\n\r");
+      round = atoi(pointer);
+      pointer = strtok(NULL, "|\n\r");
+      target = atol(pointer);
+      pointer = strtok(NULL, "|\n\r");
+      solution = atol(pointer);
+      pointer = strtok(NULL, "|\n\r");
+      yesNo[0] = atoi(pointer);
+      pointer = strtok(NULL, "|\n\r");
+      yesNo[1] = atoi(pointer);
+      pointer = strtok(NULL, "|\n\r");
+      rondas_verificadas = atoi(pointer);
+      status = strtok(NULL, "|\n\r");
+
+      /*Escribe los resultados en el fichero*/
+      dprintf(fd,
+              "Id:%d \n"
+              "Winner:%jd \n"
+              "Target:%ld \n"
+              "Solution: %ld (%s)\n"
+              "Votes: %d/%d \n"
+              "Wallets: %jd:%d\n\n",
+              round, (intmax_t)getppid(), target, solution, status, yesNo[0], yesNo[0] + yesNo[1],
+              (intmax_t)getppid(), rondas_verificadas);
+
+      /**Manda señal de que ya ha escrito en el fichero */
+      write(registrador_escribe[1], buffer, strlen(buffer) + 1);
+    }
+    close(minero_escribe[0]);
+    close(registrador_escribe[1]);
+    close(fd);
+    printf("Register exited with status 0\n");
     exit(EXIT_SUCCESS);
   }
   /*Proceso padre: minero*/
@@ -647,8 +664,8 @@ int main(int argc, char *argv[])
     }
 
     /**Se cierran pipes pertinentes*/
-    // close(registrador_escribe[1]); /*registrador escribe (escritura)*/
-    // close(minero_escribe[0]);      /*minero escribe (lectura)*/
+    close(registrador_escribe[1]); /*registrador escribe (escritura)*/
+    close(minero_escribe[0]);      /*minero escribe (lectura)*/
 
     /**Abrimos todos los semaforos para la ejecucion de las tareas coordinadas */
 
@@ -663,6 +680,7 @@ int main(int argc, char *argv[])
         SEM_FAILED)
     {
       perror("sem_open");
+      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
       exit(EXIT_FAILURE);
     }
 
@@ -670,6 +688,7 @@ int main(int argc, char *argv[])
         SEM_FAILED)
     {
       perror("sem_open");
+      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
       exit(EXIT_FAILURE);
     }
 
@@ -677,6 +696,7 @@ int main(int argc, char *argv[])
         SEM_FAILED)
     {
       perror("sem_open");
+      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
       exit(EXIT_FAILURE);
     }
 
@@ -697,8 +717,8 @@ int main(int argc, char *argv[])
 
     if (!arg_array || !thread_array)
     {
-      // close(minero_escribe[1]);
-      // close(registrador_escribe[0]);
+      close(minero_escribe[1]);
+      close(registrador_escribe[0]);
       sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
       desinscribirseLista(getpid());
       sem_post(mutex_pids);
@@ -713,9 +733,9 @@ int main(int argc, char *argv[])
       arg_array[i] = (ArgsSolucion *)malloc(sizeof(ArgsSolucion));
       if (!arg_array[i])
       {
-        // close(minero_escribe[1]);
-        // close(registrador_escribe[0]);/*Accedemos a sección crítica: el fichero de pid's*/    
-        sem_wait(mutex_pids);
+        close(minero_escribe[1]);
+        close(registrador_escribe[0]);    
+        sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
         desinscribirseLista(getpid());
         sem_post(mutex_pids);
         clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
@@ -747,6 +767,8 @@ int main(int argc, char *argv[])
     /*Ejecutamos el código del minero*/
     while (terminar == 0)
     {
+      //Corremos una ronda más
+      rondas_corridas++;
       // restauramos el valor de finished para la siguiente ronda
       finished = 0;
 
@@ -787,9 +809,9 @@ int main(int argc, char *argv[])
           }
           clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
 
-          // close(minero_escribe[1]);
-          // close(registrador_escribe[0]);
-          // clean_and_free(n_threads, arg_array, thread_array);
+          close(minero_escribe[1]);
+          close(registrador_escribe[0]);
+
           wait(NULL);
           printf("Miner <%d> exited while waiting\n", getpid());
           exit(EXIT_SUCCESS);
@@ -838,8 +860,8 @@ int main(int argc, char *argv[])
           free(arg_array);
           free(thread_array);
 
-          // close(minero_escribe[1]);
-          // close(registrador_escribe[0]);
+          close(minero_escribe[1]);
+          close(registrador_escribe[0]);
           wait(NULL);
           printf("Miner <%d> exited with status 1\n", getpid());
           exit(EXIT_FAILURE);
@@ -874,16 +896,39 @@ int main(int argc, char *argv[])
         sem_post(mutex_pids);
 
         new_target(solution);
-        target = solution;
         sem_post(mutex_target);
         /*Esperamos a que todos los procesos voten*/
         wait_votation(mutex_votacion, n_miners, yesNo);
         // Sumamos a las rondas ganadas del minero y si gana la votacion sumamos a las rondas verificadas
         rondas_ganadas++;
-        if (yesNo[0] >= yesNo[1])
+        if (yesNo[0] >= yesNo[1]){
           rondas_verificadas++;
+          status = validado;
+        }else{
+          status = rejected;
+        }
         ganador = 1;
+        //Imprimimos por terminal
         printf("Winner <%d> Yes|No: (%d|%d) => %s\n", getpid(), yesNo[0], yesNo[1], yesNo[0] >= yesNo[1] ? "Accepted" : "Rejected");
+        //Mandamos al registrador también la información
+        sprintf(buffer, "%d|%ld|%ld|%d|%d|%d|%s\n", rondas_corridas, target, solution, yesNo[0], yesNo[1], rondas_verificadas, status);
+        write(minero_escribe[1], buffer, strlen(buffer) + 1);
+        
+        //Escribimos el nuevo valor para el target
+        target = solution;
+
+
+        /**Leemos la señal del registrador para continuar con la siguiente ronda
+         */
+        if (read(registrador_escribe[0], buffer, sizeof(buffer)) <= 0) {
+          close(minero_escribe[1]);
+          close(registrador_escribe[0]);
+          clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+          printf("Miner exited with status 0\n");
+          wait(NULL);
+          return EXIT_SUCCESS;
+        }
+
         sem_post(ganador_sem);
       }
       else
@@ -900,33 +945,6 @@ int main(int argc, char *argv[])
         ganador = 0;
       }
 
-      //   /*Determinamos si la solución será validada o rechazada. En esta
-      //    * iteración, se toma como criterio arbitrario que la solución sea
-      //    * múltiplo de 10*/
-      //   status = VALIDATE(solution) ? validado : rejected;
-      //
-      //   /*Se ha encontrado una solución, se le envía al registrador*/
-      //   // sprintf(buffer, "%d|%ld|%ld|%s\n", i, target_ini, solution, status);
-      //   write(minero_escribe[1], buffer, strlen(buffer) + 1);
-      //
-      //   /*Imprimimos por terminal también*/
-      //   // printf("Solution %s: %ld------->%ld\n",
-      //   // VALIDATE(solution)?accepted:rejected, target_ini, solution);
-      //
-      //   // target_ini = solution;
-      //
-      //   /**Leemos la señal del registrador para continuar con la siguiente ronda
-      //    */
-      //   if (read(registrador_escribe[0], buffer, sizeof(buffer)) <= 0) {
-      //     close(minero_escribe[1]);
-      //     close(registrador_escribe[0]);
-      //     clean_and_free(n_threads, arg_array, thread_array);
-      //     printf("Miner exited with status 0\n");
-      //     wait(NULL);
-      //     return EXIT_SUCCESS;
-      //   }
-      //   finished = 0;
-      // }
     }
 
     /**********FINAL DE EJECUCION Y MUERTE DEL PROCESO**************/
@@ -969,8 +987,8 @@ int main(int argc, char *argv[])
     // limpiamos ejecucion
     clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
 
-    // close(minero_escribe[1]);
-    // close(registrador_escribe[0]);
+    close(minero_escribe[1]);
+    close(registrador_escribe[0]);
     // clean_and_free(n_threads, arg_array, thread_array);
     wait(NULL);
     printf("Miner <%d> exited with status 0\n", getpid());
