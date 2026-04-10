@@ -61,7 +61,7 @@ atomic_int finished = 0; // Variable global compartida por los hilos que indica 
 
 /**Variable que indica si el minero ha recibido la señal que indica que ha
  * terminado su tiempo*/
-int terminar = 0;
+atomic_int terminar = 0;
 
 /**Función responsable de gestionar la llegada de señales SIGALRM*/
 void handler_alarm(int sig)
@@ -546,9 +546,9 @@ int main(int argc, char *argv[])
     De esta manera nos aseguramos que la señal no se puede perder antes de que un proceso llegue a sigsuspend con la otra mascara*/
   sigemptyset(&block1mask);
   sigaddset(&block1mask, SIGUSR1);
-  if (sigprocmask(SIG_BLOCK, &block1mask, &origMask) == -1)
+  if (pthread_sigmask(SIG_BLOCK, &block1mask, &origMask) == -1)
   {
-    perror("sigprocmask");
+    perror("pthread_procmask");
   }
   /*Preparamos la máscara que desbloquea SIGUSR1 y bloquea tanto SIGUSR2 como SIGALRM para comenzar la carrera*/
   sigemptyset(&block2mask);
