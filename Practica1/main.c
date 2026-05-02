@@ -242,7 +242,7 @@ void desinscribirseLista(int pid)
     }
   } 
   //Una vez hemos encontrado la posición en la que estaba nuestro pid, desplazamos el resto
-  for(;i>MAX_MINEROS;i++){
+  for(;i<MAX_MINEROS;i++){
     pids[i-1] = pids[i];
   }
   close(fd_shm);
@@ -338,7 +338,7 @@ int count_players()
     }else{
       break;
     }
-  } 
+  }
   close(fd_shm);
   munmap(pids, MAX_MINEROS * sizeof(int));
   return players;
@@ -402,7 +402,7 @@ void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
       }else{
         break;
       }
-    } 
+    }
     close(fd_shm);
     munmap(votations, MAX_MINEROS * sizeof(char));
     sem_post(mutex_votacion);
@@ -432,7 +432,7 @@ void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
     }else{
       break;
     }
-  } 
+  }
 
 
   // reseteamos las votaciones para la siguiente ronda truncando el fichero
@@ -480,7 +480,7 @@ mqd_t open_message_queue() {
   attributes.mq_maxmsg = 10;
   attributes.mq_msgsize = MAX_MESSAGE ;
 
-  if ((mqd = mq_open(COMPROBADOR_MONITOR_MESSAGE_QUEUE, O_WRONLY, S_IRUSR | S_IWUSR, &attributes)) ==
+  if ((mqd = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_WRONLY, S_IRUSR | S_IWUSR, &attributes)) ==
       (mqd_t)-1)
   {
     perror("sem_open");
@@ -752,7 +752,7 @@ int main(int argc, char *argv[])
       exit(EXIT_FAILURE);
     }
 
- 
+
     if ((mutex_target = sem_open(MUTEX_TARGET_SEM_NAME, 0, 0, 1)) ==
         SEM_FAILED)
     {
@@ -959,7 +959,10 @@ int main(int argc, char *argv[])
 
         // Enviamos la solución al comprobador
         sprintf(aux, "%d, %d", target, solution);
-        mq_send(mqd, aux, MAX_MESSAGE, 0);
+        if ((mq_send(mqd, aux, MAX_MESSAGE, 0)) == (mqd_t)-1) {
+          perror(("mq_send"));
+          exit(EXIT_FAILURE);
+        }
 
         // Escribimos el nuevo valor para el target
         target = solution;
@@ -1029,7 +1032,6 @@ int main(int argc, char *argv[])
     mq_close(mqd);
     close(minero_escribe[1]);
     close(registrador_escribe[0]);
-    // clean_and_free(n_threads, arg_array, thread_array);
     wait(NULL);
     printf("Miner <%d> exited with status 0\n", getpid());
     return EXIT_SUCCESS;

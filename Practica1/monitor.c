@@ -190,7 +190,7 @@ void create_message_queues(MessageQueues *mqs) {
     perror("mq_open");
     exit(EXIT_FAILURE);
   }
-  if ((mqs->fd_ComprobadorMonitorQueue = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, &attributes)) ==
+  if ((mqs->fd_MinerComprobadorQueue = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, &attributes)) ==
        (mqd_t)-1)
   {
     perror("mq_open");
@@ -233,7 +233,7 @@ int main(int argc, char *argv[])
   create_fds(&fds);
 
   /*Creamos los ficheros de memoria compartida del sistema*/
-  //create_message_queues(&mqs);
+  create_message_queues(&mqs);
 
   /*Realizamos el bloqueo de la señal de alarma, pues ambos procesos usarán la alarma para su temporización y la máscara
      *de señales bloqueadas y el handler se heredan tras un fork*/
@@ -255,7 +255,7 @@ int main(int argc, char *argv[])
   if (pid == 0)
   {
     /*El monitor no necesita la cola que existe entre los mineros y el comprobador*/
-    //mq_close(mqs.fd_MinerComprobadorQueue);
+    mq_close(mqs.fd_MinerComprobadorQueue);
     close_semaphores(sems);
     free(sems);
     close_message_queues(&mqs);
@@ -278,19 +278,22 @@ int main(int argc, char *argv[])
     while (finishCondition == 0) {
       alarm(lag_comprobador);
       /*Esperamos un mensaje de algún minero*/
-      //mq_receive(mqs.fd_MinerComprobadorQueue, aux, MAX_MESSAGE, NULL);
+      if ((mq_receive(mqs.fd_MinerComprobadorQueue, aux, MAX_MESSAGE, NULL)) == (mqd_t)-1) {
+        perror(("mq_receive"));
+        exit(EXIT_FAILURE);
+      }
       /*Analizamos el mensaje*/
-     // word1 = strtok(aux, " ");
-     // if (strcmp(word1, MINERS_ENDED) == 0) {
-      //  finishCondition = 1;
-      //}else {
-       // word2 = strtok(NULL, " ");
-       // printf("%s, %s\n", word1, word2);
-        while (!interrupted) {
-          sigsuspend (&oldmask);
-        }
-      //}
-      finishCondition = 1;
+       word1 = strtok(aux, " ");
+       if (strcmp(word1, MINERS_ENDED) == 0) {
+         finishCondition = 1;
+         printf("Finish condition recibida\n");
+       }else {
+         word2 = strtok(NULL, " ");
+         printf("%s %s\n", word1, word2);
+         while (!interrupted) {
+           sigsuspend(&oldmask);
+         }
+       }
     }
   }
 
@@ -302,4 +305,3 @@ int main(int argc, char *argv[])
   unlink_message_queues();
   return EXIT_SUCCESS;
 }
-
