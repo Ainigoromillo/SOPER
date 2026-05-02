@@ -8,53 +8,17 @@
  * @date 2026-02-28
  *
  */
+#include "resources.h"
+
 /* Expose POSIX APIs such as sigprocmask and SIG_BLOCK */
-#include <errno.h>
 #define _POSIX_C_SOURCE 200809L
-
-#include "pow.h"
-#include <time.h>
-#include <fcntl.h>
-#include <pthread.h>
-#include <semaphore.h>
-#include <signal.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
-#include <sys/wait.h>
-#include <unistd.h>
-#include <stdatomic.h>
-#include <sys/mman.h>
-
-atomic_int finished = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
-#define NO_TARGET -1
 #define MAX_BUFFER 4
-#define MAX_INTENTOS 500 // El numero maximo de esperas que hace el proceso ganador a que los demas voten
+#define MAX_INTENTOS 500 // El número maximo de esperas que hace el proceso ganador a que los demas voten
 #define YES 'y'
 #define NO 'n'
-#define MUTEX_PIDS_SEM_NAME "/mutex_pids_sem"
-#define MUTEX_TARGET_SEM_NAME "/mutex_target"
-#define GANADOR_SEM "/ganador_sem"
-#define MUTEX_VOTACION_SEM_NAME "/mutex_voting"
-#define MAX_MINEROS 20
 
+atomic_int finished = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
 
-#define FICHERO_SISTEMA                                                        \
-  "Pids.pid" /**Nombre del fichero donde se guardarán los pids de los mineros \
-                que participen en las carreras*/
-#define FICHERO_SISTEMA_TEMP                                                        \
-  "Pids_temp.pid" /**Nombre del fichero donde se guardarán los pids de los mineros \
-                temporalmente en el proceso de borrar uno de ellos*/
-#define FICHERO_TARGET                                                         \
-  "Target.tgt" /**Nombre del fichero donde se esciribrá el target que usarán \
-                  los mineros que participen en las carreras*/
-
-#define FICHERO_VOTACION                                                      \
-  "Voting.vot" /**Nombre del fichero donde los procesos perdedores apuntan su \
-                  votacion y el proceso ganador comprueba si todos han votado */
 
 #define SOLUTION_NOT_FOUND                                                    \
   -1 /**Valor que devuelven los hilos si no han encontrado una solución para \
@@ -114,7 +78,7 @@ void start_race(int caller_pid)
   int *pids=NULL;
   int i;
 
-  if (( fd_shm = shm_open ( FICHERO_SISTEMA , O_RDONLY, 0) ) == -1) {
+  if (( fd_shm = shm_open ( FICHERO_PIDS , O_RDONLY, 0) ) == -1) {
     perror ( " shm_open start_race " ) ;
     exit ( EXIT_FAILURE ) ;
   }
@@ -145,17 +109,7 @@ void start_votation(int caller_pid)
   int *pids=NULL;
   int i;
 
-  fd_shm = shm_open ( FICHERO_VOTACION , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
-  if ( !(fd_shm == -1) ) {
-    if((ftruncate(fd_shm, sizeof(char) * MAX_MINEROS)) == -1){
-      perror("ftruncate");
-      sem_unlink(FICHERO_VOTACION);
-      exit(EXIT_FAILURE);
-    }
-  } 
-  close(fd_shm);
-
-  if (( fd_shm = shm_open ( FICHERO_SISTEMA , O_RDONLY, 0) ) == -1) {
+  if (( fd_shm = shm_open ( FICHERO_PIDS , O_RDONLY, 0) ) == -1) {
     perror ( " shm_open start_votation" ) ;
     exit ( EXIT_FAILURE ) ;
   }
@@ -187,35 +141,14 @@ int fd_shm;
   int *pids=NULL;
   int i;
 
-  fd_shm = shm_open ( FICHERO_SISTEMA , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
+  fd_shm = shm_open ( FICHERO_PIDS , O_RDWR , 0) ;
   if ( fd_shm == -1) {
-    if ( errno == EEXIST ) {
-      fd_shm = shm_open ( FICHERO_SISTEMA , O_RDWR , 0) ;
-      if ( fd_shm == -1) {
-        perror ( " Error opening the shared memory segment \n " ) ;
-        close(fd_shm);
-        exit ( EXIT_FAILURE ) ;
-      } 
-    } else {
-      perror ( " Error creating the shared memory segment \n " ) ;
-      close(fd_shm);
-      exit ( EXIT_FAILURE ) ;
-    }
-  }else{
-    if((ftruncate(fd_shm, sizeof(int) * MAX_MINEROS)) == -1){
-      perror("ftruncate");
-      sem_unlink(FICHERO_SISTEMA);
-      exit(EXIT_FAILURE);
-    }else{
-    }
+    perror ( " Error opening the shared memory segment \n " ) ;
+    close(fd_shm);
+    exit ( EXIT_FAILURE ) ;
   }
    
   pids = mmap(NULL, MAX_MINEROS * sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
-  if(pids == MAP_FAILED){
-    close(fd_shm);
-    perror("mmap en inscribirseLista");
-    exit(EXIT_FAILURE);
-  }
   if(pids == MAP_FAILED){
     close(fd_shm);
     perror("mmap en inscribirseLista");
@@ -289,7 +222,7 @@ void desinscribirseLista(int pid)
   int *pids=NULL;
   int i;
 
-  if (( fd_shm = shm_open ( FICHERO_SISTEMA , O_RDWR, 0 ) ) == -1) {
+  if (( fd_shm = shm_open ( FICHERO_PIDS , O_RDWR, 0 ) ) == -1) {
     perror ( " shm_open en desinscribirseLista" ) ;
     exit ( EXIT_FAILURE ) ;
   }
@@ -354,31 +287,13 @@ int leer_target()
   int *target = NULL;
   int fd_shm;
   int ret = 0;
-  int ganador = 0;
-
-  fd_shm = shm_open ( FICHERO_TARGET , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
+  fd_shm = shm_open ( FICHERO_TARGET , O_RDWR , 0) ;
   if ( fd_shm == -1) {
-    if ( errno == EEXIST ) {
-      fd_shm = shm_open ( FICHERO_TARGET , O_RDWR , 0) ;
-      if ( fd_shm == -1) {
-        perror ( " Error opening the shared memory segment \n " ) ;
-        close(fd_shm);
-        exit ( EXIT_FAILURE ) ;
-      } 
-    } else {
-      perror ( " Error creating the shared memory segment \n " ) ;
-      close(fd_shm);
-      exit ( EXIT_FAILURE ) ;
-    }
-  }else{
-    ganador = 1;
-    if((ftruncate(fd_shm, sizeof(int)) * 1) == -1){
-      perror("ftruncate leer_target");
-      sem_unlink(FICHERO_TARGET);
-      exit(EXIT_FAILURE);
-    }
-    
+    perror ( " Error opening the shared memory segment \n " ) ;
+    close(fd_shm);
+    exit ( EXIT_FAILURE ) ;
   }
+
   target = mmap(NULL, sizeof(int), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
   if(target == MAP_FAILED){
     close(fd_shm);
@@ -389,7 +304,7 @@ int leer_target()
   
   close(fd_shm);
   munmap(target, sizeof(int));
-  if(ganador == 1) return NO_TARGET;
+  /*En caso de que no se hubiese escrito un target todavía por un minero, el valor de inicialización es NO_TARGET*/
   return ret;
     
   }
@@ -406,7 +321,7 @@ int count_players()
   int *pids=NULL;
   int i;
 
-  if (( fd_shm = shm_open (FICHERO_SISTEMA , O_RDONLY, 0) ) == -1) {
+  if (( fd_shm = shm_open (FICHERO_PIDS , O_RDONLY, 0) ) == -1) {
     perror ( " shm_open en count_players" ) ;
     exit ( EXIT_FAILURE ) ;
   }
@@ -559,6 +474,21 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array,
   sem_close(mutex_votacion);
 }
 
+mqd_t open_message_queue() {
+  mqd_t mqd;
+  struct mq_attr attributes;
+  attributes.mq_maxmsg = 10;
+  attributes.mq_msgsize = MAX_MESSAGE ;
+
+  if ((mqd = mq_open(COMPROBADOR_MONITOR_MESSAGE_QUEUE, O_WRONLY, S_IRUSR | S_IWUSR, &attributes)) ==
+      (mqd_t)-1)
+  {
+    perror("sem_open");
+    exit(EXIT_FAILURE);
+  }
+  return mqd;
+}
+
 
 /**
  * @brief aplica la función hash a todos los valores entre un intervalo dado
@@ -619,6 +549,8 @@ int main(int argc, char *argv[])
   int ganador = 0;
   int target;
   int rondas_ganadas = 0, rondas_verificadas = 0, rondas_corridas = 0;
+  char aux [ MAX_MESSAGE ];
+  mqd_t mqd;
 
   /**Estructura para el nanosleep*/
   struct timespec ts = {
@@ -755,6 +687,8 @@ int main(int argc, char *argv[])
     /*************************************************
      **************CONFIGURACIONES PREVIAS************
      **************************************************/
+    /*Abrimos la cola de mensajes*/
+    mqd = open_message_queue();
 
     // Configuramos la señal de alarma
     act_alarm.sa_handler = handler_alarm;
@@ -795,14 +729,14 @@ int main(int argc, char *argv[])
 
     /**Abrimos todos los semaforos para la ejecucion de las tareas coordinadas */
 
-    if ((mutex_votacion = sem_open(MUTEX_VOTACION_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
+    if ((mutex_votacion = sem_open(MUTEX_VOTACION_SEM_NAME, 0, 0, 1)) ==
         SEM_FAILED)
     {
       perror("sem_open");
       exit(EXIT_FAILURE);
     }
 
-    if ((mutex_pids = sem_open(MUTEX_PIDS_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
+    if ((mutex_pids = sem_open(MUTEX_PIDS_SEM_NAME, 0, 0, 1)) ==
         SEM_FAILED)
     {
       perror("sem_open");
@@ -810,7 +744,7 @@ int main(int argc, char *argv[])
       exit(EXIT_FAILURE);
     }
 
-    if ((ganador_sem = sem_open(GANADOR_SEM, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
+    if ((ganador_sem = sem_open(GANADOR_SEM, 0, 0, 1)) ==
         SEM_FAILED)
     {
       perror("sem_open");
@@ -819,7 +753,7 @@ int main(int argc, char *argv[])
     }
 
  
-    if ((mutex_target = sem_open(MUTEX_TARGET_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
+    if ((mutex_target = sem_open(MUTEX_TARGET_SEM_NAME, 0, 0, 1)) ==
         SEM_FAILED)
     {
       perror("sem_open");
@@ -964,7 +898,7 @@ int main(int argc, char *argv[])
           }
           free(arg_array);
           free(thread_array);
-
+          mq_close(mqd);
           close(minero_escribe[1]);
           close(registrador_escribe[0]);
           wait(NULL);
@@ -1022,6 +956,11 @@ int main(int argc, char *argv[])
         sprintf(buffer, "%d|%d|%ld|%d|%d|%d|%s\n", rondas_corridas, target, solution, yesNo[0], yesNo[1], rondas_verificadas, status);
         write(minero_escribe[1], buffer, strlen(buffer) + 1);
 
+
+        // Enviamos la solución al comprobador
+        sprintf(aux, "%d, %d", target, solution);
+        mq_send(mqd, aux, MAX_MESSAGE, 0);
+
         // Escribimos el nuevo valor para el target
         target = solution;
 
@@ -1036,17 +975,7 @@ int main(int argc, char *argv[])
           n_miners = count_players();
           sem_post(mutex_pids);
 
-          if (n_miners == 0)
-          {
-            printf("ELIMINANDO FICHEROS <%d>\n", getpid());
-            unlink(FICHERO_SISTEMA);
-            unlink(FICHERO_TARGET);
-            unlink(FICHERO_VOTACION);
-            sem_unlink(MUTEX_PIDS_SEM_NAME);
-            sem_unlink(MUTEX_TARGET_SEM_NAME);
-            sem_unlink(GANADOR_SEM);
-            sem_unlink(MUTEX_VOTACION_SEM_NAME);
-          }
+          mq_close(mqd);
           clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
           printf("Miner exited with status 0\n");
           wait(NULL);
@@ -1088,26 +1017,16 @@ int main(int argc, char *argv[])
       n_miners = count_players();
       sem_post(mutex_pids);
     }
+    if (n_miners == 0) {
+      sprintf(aux, MINERS_ENDED);
+      mq_send(mqd, aux, MAX_MESSAGE, 0);
+    }
     // Vemos que la seccion critica unifica desinscribirse y countplayers. Esto soluciona el caso de que dos se desapunten y lean 0 personas a la vez
     // Cuando el primero en desapuntarse deberia haber leido que quedaba uno
 
-
-    if (n_miners == 0)
-    {
-      printf("ELIMINANDO FICHEROS <%d>\n", getpid());
-      unlink(FICHERO_SISTEMA);
-      unlink(FICHERO_TARGET);
-      unlink(FICHERO_VOTACION);
-
-      sem_unlink(MUTEX_PIDS_SEM_NAME);
-      sem_unlink(MUTEX_TARGET_SEM_NAME);
-      sem_unlink(GANADOR_SEM);
-      sem_unlink(MUTEX_VOTACION_SEM_NAME);
-    }
-
     // limpiamos ejecucion
     clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
-
+    mq_close(mqd);
     close(minero_escribe[1]);
     close(registrador_escribe[0]);
     // clean_and_free(n_threads, arg_array, thread_array);
