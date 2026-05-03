@@ -35,10 +35,10 @@ pow.o: pow.c
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 
-minero.o: minero.c
+minero.o: minero.c minero.h resources.h
 	$(CC) $(CFLAGS) -o $@ -c $<
 
-registrador.o: registrador.c
+registrador.o: registrador.c registrador.h resources.h
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 
@@ -77,7 +77,10 @@ clean_sem:
 	rm -f /dev/shm/Voting.vot
 	rm -f /dev/shm/Target.tgt
 	rm -f Pids.pid Target.tgt Voting.vot
-run:
+
+run_monitor:
+	./monitor 100 100
+run_mineros:
 	./miner 7 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1  & ./miner 6 1  & ./miner 6 1
 
 runv:

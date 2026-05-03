@@ -1,7 +1,7 @@
 #include "registrador.h"
-
 #include "pow.h"
 #include <time.h>
+#include <string.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -57,7 +57,7 @@ void funcionaldadRegistrador(int minero_escribe[2], int registrador_escribe[2]){
       dprintf(fd,
               "Id:%d \n"
               "Winner:%jd \n"
-              "Target:%d \n"
+              "Target:%ld \n"
               "Solution: %ld (%s)\n"
               "Votes: %d/%d \n"
               "Wallets: %jd:%d\n\n",

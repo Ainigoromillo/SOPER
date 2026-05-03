@@ -8,6 +8,7 @@
 #ifndef PRACTICA1_RESOURCES_H
 #define PRACTICA1_RESOURCES_H
 /*Includes*/
+#define _POSIX_C_SOURCE 200809L
 #include "pow.h"
 #include <time.h>
 #include <fcntl.h>
