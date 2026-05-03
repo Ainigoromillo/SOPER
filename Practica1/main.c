@@ -67,11 +67,11 @@ int main(int argc, char *argv[])
   {
     
     
-    close(minero_escribe[0]);
-    close(registrador_escribe[1]);
-    funcionaldadRegistrador(minero_escribe, registrador_escribe);
     close(minero_escribe[1]);
     close(registrador_escribe[0]);
+    funcionaldadRegistrador(minero_escribe, registrador_escribe);
+    close(minero_escribe[0]);
+    close(registrador_escribe[1]);
     printf("Register of %d exited with status 0\n", getppid());
     exit(EXIT_SUCCESS);
   }

@@ -264,6 +264,23 @@ int main(int argc, char *argv[])
   /*Proceso padre: comprobador*/
   else {
     int finishCondition = 0;
+    //Usamos setitimer para poder establecer intervalos de milisegundos, pues con alarm solo se pueden usar segundos
+    struct itimerspec value;
+    timer_t timerid;
+    struct sigevent evp = {0};
+
+    //Introducimos el tiempo en nanosegundos
+    value.it_value.tv_nsec = lag_comprobador * 1000000;
+    value.it_value.tv_sec = lag_comprobador * 1000000;
+
+    //Configuramos la señal que se lanzará una vez transcurrido el timer
+    evp.sigev_notify = SIGEV_SIGNAL;
+    evp.sigev_signo = SIGALRM;
+
+
+    //Creamos el timer
+    timer_create(CLOCK_REALTIME, &evp, &timerid);
+
 
     act_alarm.sa_handler = handler_alarm;
     sigemptyset(&(act_alarm.sa_mask));
@@ -276,7 +293,8 @@ int main(int argc, char *argv[])
     /* Set up the mask of signals to temporarily block. */
 
     while (finishCondition == 0) {
-      alarm(lag_comprobador);
+      //Hacemos que empiece a contar el tiempo
+      timer_settime(timerid, TIMER_ABSTIME, &value, NULL);
       /*Esperamos un mensaje de algún minero*/
       if ((mq_receive(mqs.fd_MinerComprobadorQueue, aux, MAX_MESSAGE, NULL)) == (mqd_t)-1) {
         perror(("mq_receive"));

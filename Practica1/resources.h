@@ -22,6 +22,7 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <unistd.h>
 #include <stdatomic.h>
 #include <sys/mman.h>
