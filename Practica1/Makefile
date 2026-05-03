@@ -1,4 +1,5 @@
-objects=main.o pow.o
+objects=main.o pow.o minero.o registrador.o
+
 program=miner
 CC = gcc
 #CFLAGS = -ansi -pedantic -Wall -g
@@ -24,6 +25,14 @@ main.o: main.c
 
 pow.o: pow.c
 	$(CC) $(CFLAGS) -o $@ -c $<
+
+
+minero.o: minero.c
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+registrador.o: registrador.c
+	$(CC) $(CFLAGS) -o $@ -c $<
+
 
 
 .PHONY: clean cleanLog run all
