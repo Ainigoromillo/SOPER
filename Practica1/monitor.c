@@ -9,24 +9,29 @@
  */
 #include "resources.h"
 
-#define SEM_MUTEX "/sem_mutex"
-#define SEM_FILL "/sem_fill"
-#define SEM_EMPTY "/sem_empty"
 
 #define FICHERO_SISTEMA "/systemFile"
+
+#define MSG_QUEUE_TAM 7
+#define VALIDATED 1
+#define END_OF_PROGRAM -1
 
 /**
  * Estructura que almacena todos los semáforos que usará el sistema, los cuales son creados y destruidos por el monitor
  */
 typedef struct{
+
+  //Semaforos de minero-registrador
   sem_t *mutex_votacion;
   sem_t *mutex_pids;
   sem_t *ganador_sem;
   sem_t *mutex_target;
-  sem_t *sem_mutex;
-  sem_t * sem_fill;
-  sem_t * sem_empty;
+
+
 }SystemSemaphores;
+
+
+
 
 typedef struct{
   int fd_Pids;
@@ -36,23 +41,32 @@ typedef struct{
 }FileDescriptors;
 
 typedef struct {
-  long target;
+  int target;
   long solution;
-  char validated;
+  int validated;
 }InfoParaMonitor;
 
 typedef struct {
-  int fd_MinerComprobadorQueue;
-  int fd_ComprobadorMonitorQueue;
+  mqd_t fd_MinerComprobadorQueue;
 }MessageQueues;
 
-atomic_int interrupted = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
 
-/**Función responsable de gestionar la llegada de señales SIGALRM*/
-void handler_alarm(int sig)
-{
-  interrupted = 1;
-}
+typedef struct{
+    //semaforos para monitor-comprobador, notar que no son punteros,
+    //puesto que esos punteros serian respectivos a la memoria virtual de uno
+    //de los procesos.
+  sem_t sem_mutex;
+  sem_t sem_fill;
+  sem_t sem_empty;
+
+  //buffer de 6 bloques
+  InfoParaMonitor cola[6];
+  int next, end;
+
+}MemoriaCompartida;
+
+int interrupted = 0; 
+
 
 /*****************************************************/
 /********************SEMÁFOROS************************/
@@ -63,13 +77,10 @@ void close_semaphores(const SystemSemaphores *sems) {
   sem_close(sems->mutex_pids);
   sem_close(sems->mutex_target);
   sem_close(sems->mutex_votacion);
-  sem_close(sems->sem_mutex);
-  sem_close(sems->sem_empty);
-  sem_close(sems->sem_fill);
 }
 
-void create_individual_semaphore(sem_t **semaphore, int init_value) {
-  if (((*semaphore) = sem_open(MUTEX_VOTACION_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, init_value)) ==
+void create_individual_semaphore(sem_t **semaphore, int init_value, char *sem_name) {
+  if (((*semaphore) = sem_open(sem_name, O_CREAT, S_IRUSR | S_IWUSR, init_value)) ==
       SEM_FAILED)
   {
     perror("sem_open");
@@ -85,16 +96,13 @@ SystemSemaphores *create_semaphores() {
   if (!((sems = (SystemSemaphores *) malloc(sizeof(SystemSemaphores))))) {
     return NULL;
   }
-  //Semáforos para el fichero monitor
-  create_individual_semaphore(&(sems->sem_mutex), 1);
-  create_individual_semaphore(&(sems->sem_empty), 0);
-  create_individual_semaphore(&(sems->sem_fill), 0);
+
 
   //Semáforos para los mineros
-  create_individual_semaphore(&(sems->ganador_sem), 1);
-  create_individual_semaphore(&(sems->mutex_pids), 1);
-  create_individual_semaphore(&(sems->mutex_target), 1);
-  create_individual_semaphore(&(sems->mutex_votacion), 1);
+  create_individual_semaphore(&(sems->ganador_sem), 1, GANADOR_SEM);
+  create_individual_semaphore(&(sems->mutex_pids), 1, MUTEX_PIDS_SEM_NAME);
+  create_individual_semaphore(&(sems->mutex_target), 1, MUTEX_TARGET_SEM_NAME);
+  create_individual_semaphore(&(sems->mutex_votacion), 1, MUTEX_VOTACION_SEM_NAME);
 
   return sems;
 }
@@ -104,9 +112,6 @@ void unlink_semaphores() {
   sem_unlink(GANADOR_SEM);
   sem_unlink(MUTEX_PIDS_SEM_NAME);
   sem_unlink(MUTEX_TARGET_SEM_NAME);
-  sem_unlink(SEM_FILL);
-  sem_unlink(SEM_EMPTY);
-  sem_unlink(SEM_MUTEX);
 }
 
 void semaphores_exit(SystemSemaphores *sems) {
@@ -118,6 +123,40 @@ void semaphores_exit(SystemSemaphores *sems) {
 /*****************************************************/
 /**********MEMORIA COMPARTIDA*************************/
 /*****************************************************/
+
+int abrir_descriptor_compartida(){
+  int fd = shm_open ( FICHERO_SISTEMA , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
+  MemoriaCompartida *shm = NULL;
+
+  if (fd != -1 ) {
+    if((ftruncate(fd, sizeof(MemoriaCompartida))) == -1){
+      perror("ftruncate");
+      sem_unlink(FICHERO_SISTEMA);
+      exit(EXIT_FAILURE);
+    }
+
+    shm = mmap(NULL, sizeof(MemoriaCompartida), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (shm == MAP_FAILED) {
+    perror("mmap");
+    shm_unlink(FICHERO_SISTEMA);
+    exit(EXIT_FAILURE);
+}
+    //ahora abrimos los semaforos sin nombre
+    sem_init(&shm->sem_mutex, 1, 1);  // mutex , empieza en 1
+    sem_init(&shm->sem_fill,  1, 0);  // fill , empieza en 0 (buffer vacío)
+    sem_init(&shm->sem_empty, 1, 6);  // empty , empieza en 6 (6 huecos libres)
+    shm->end = 0;
+    shm->next = 0;
+
+     munmap(shm, sizeof(MemoriaCompartida)); //desmapeo y devuelvo
+     return fd;
+
+  }else {
+    perror("shm_open");
+    exit(EXIT_FAILURE);
+  }
+
+}
 
 void create_fds(FileDescriptors *fds) {
   int *target=NULL;
@@ -140,6 +179,7 @@ void create_fds(FileDescriptors *fds) {
   if (fds->fd_Pids != -1 ) {
     if((ftruncate(fds->fd_Pids, sizeof(int) * MAX_MINEROS)) == -1){
       perror("ftruncate");
+      sem_unlink(FICHERO_VOTACION);
       sem_unlink(FICHERO_PIDS);
       exit(EXIT_FAILURE);
     }
@@ -153,6 +193,8 @@ void create_fds(FileDescriptors *fds) {
   if ( fds->fd_Target != -1) {
     if((ftruncate(fds->fd_Target, sizeof(int))) == -1){
       perror("ftruncate");
+      sem_unlink(FICHERO_VOTACION);
+      sem_unlink(FICHERO_PIDS);
       sem_unlink(FICHERO_TARGET);
       exit(EXIT_FAILURE);
     }
@@ -173,31 +215,45 @@ void create_fds(FileDescriptors *fds) {
 
   close(fds->fd_Target);
 
-  fds->fd_monitorYComprobador = shm_open ( FICHERO_SISTEMA , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
-  if (fds->fd_monitorYComprobador != -1 ) {
-    if((ftruncate(fds->fd_monitorYComprobador, sizeof(InfoParaMonitor))) == -1){
-      perror("ftruncate");
-      sem_unlink(FICHERO_SISTEMA);
-      exit(EXIT_FAILURE);
-    }
-  }else {
-    perror("shm_open");
-    exit(EXIT_FAILURE);
-  }
-  close(fds->fd_monitorYComprobador);
+
+  //abrimos el descriptor de memoria compartida entre monitor-comprobador y lo dejamos abierto para acceder mas adelante
+  fds->fd_monitorYComprobador = abrir_descriptor_compartida();
+  
+
 }
+
+
 
 void unlink_shared_memory() {
   shm_unlink(FICHERO_PIDS);
   shm_unlink(FICHERO_TARGET);
   shm_unlink(FICHERO_VOTACION);
+  shm_unlink(FICHERO_SISTEMA);
 }
+
+void close_memoriaCompartida(FileDescriptors *fds){
+  MemoriaCompartida *shm = NULL;
+  
+  shm = mmap(NULL, sizeof(MemoriaCompartida), PROT_WRITE, MAP_SHARED, fds->fd_monitorYComprobador, 0);
+    if (shm == MAP_FAILED) {
+    perror("mmap");
+    exit(EXIT_FAILURE);
+}
+
+  sem_destroy(&shm->sem_empty);
+  sem_destroy(&shm->sem_fill);
+  sem_destroy(&shm->sem_mutex);
+  munmap(shm, sizeof(MemoriaCompartida));
+
+  close(fds->fd_monitorYComprobador);
+
+  return;
+ }
 
 /*****************************************************/
 /**********COLAS DE MENSAJES**************************/
 /*****************************************************/
-void close_message_queues(MessageQueues *mqs) {
-  mq_close(mqs->fd_ComprobadorMonitorQueue);
+void close_message_queues(MessageQueues *mqs) {;
   mq_close(mqs->fd_MinerComprobadorQueue);
 }
 
@@ -208,14 +264,9 @@ void unlink_message_queues() {
 
 void create_message_queues(MessageQueues *mqs) {
   struct mq_attr attributes;
-  attributes . mq_maxmsg = 10;
+  attributes . mq_maxmsg = MSG_QUEUE_TAM;
   attributes . mq_msgsize = MAX_MESSAGE ;
-  if ((mqs->fd_ComprobadorMonitorQueue = mq_open(COMPROBADOR_MONITOR_MESSAGE_QUEUE, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, &attributes)) ==
-      (mqd_t)-1)
-  {
-    perror("mq_open");
-    exit(EXIT_FAILURE);
-  }
+
   if ((mqs->fd_MinerComprobadorQueue = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_RDWR | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR, &attributes)) ==
        (mqd_t)-1)
   {
@@ -225,47 +276,70 @@ void create_message_queues(MessageQueues *mqs) {
 }
 
 /****************************************************/
-/*************Funciones del comprobador******/
+/*************Funciones del comprobador**************/
 /****************************************************/
-void escribir_mensaje(SystemSemaphores *sems, FileDescriptors *fds, long target, long solution, char validated) {
-  InfoParaMonitor *infoParaMonitor = NULL;
-  int fd = shm_open(FICHERO_SISTEMA, O_RDWR, S_IRUSR | S_IWUSR);
-  if (fd == -1) exit(EXIT_FAILURE);
+void escribir_mensaje(SystemSemaphores *sems, FileDescriptors *fds, InfoParaMonitor info) {
+  MemoriaCompartida *shm = NULL;
+  
 
-  infoParaMonitor = mmap(NULL, sizeof(InfoParaMonitor), PROT_WRITE, MAP_SHARED, fd, 0);
-  if (!infoParaMonitor) exit(EXIT_FAILURE);
+  shm = mmap(NULL, sizeof(MemoriaCompartida), PROT_READ | PROT_WRITE, MAP_SHARED, fds->fd_monitorYComprobador, 0);
+  if (shm == MAP_FAILED) {
+    perror("mmap");
+    exit(EXIT_FAILURE);
+}
 
-  sem_wait(sems->sem_empty);
-  sem_wait(sems->sem_mutex);
+  sem_wait(&shm->sem_empty);
+  sem_wait(&shm->sem_mutex);
   //Escribimos los datos
-  infoParaMonitor->solution = solution;
-  infoParaMonitor->target = target;
-  infoParaMonitor->validated = validated;
-  sem_post(sems->sem_mutex);
-  sem_post(sems->sem_fill);
 
-  munmap(infoParaMonitor, sizeof(InfoParaMonitor));
-  close(fd);
+   
+  shm->cola[shm->next] = info;
+ 
+  //muevo el puntero de la cola
+  shm->next = (shm->next + 1) % 6;
+  
+  sem_post(&shm->sem_mutex);
+  sem_post(&shm->sem_fill);
+
+  munmap(shm, sizeof(MemoriaCompartida));
+
 }
 
 /****************************************************/
-/*************Funciones del monitor******/
+/*************Funciones del monitor******************/
 /****************************************************/
-void leer_mensaje(SystemSemaphores *sems, FileDescriptors *fds, long target, long solution, char validated) {
-  InfoParaMonitor *infoParaMonitor = NULL;
-  int fd = shm_open(FICHERO_SISTEMA, O_RDWR, S_IRUSR | S_IWUSR);
-  if (fd == -1) exit(EXIT_FAILURE);
 
-  infoParaMonitor = mmap(NULL, sizeof(InfoParaMonitor), PROT_WRITE, MAP_SHARED, fd, 0);
-  if (!infoParaMonitor) exit(EXIT_FAILURE);
+void validar_sol(InfoParaMonitor *info){
+  info->validated = 1;
+ }
 
-  //Escribimos los datos
-  infoParaMonitor->solution = solution;
-  infoParaMonitor->target = target;
-  infoParaMonitor->validated = validated;
 
-  munmap(infoParaMonitor, sizeof(InfoParaMonitor));
-  close(fd);
+void leer_mensaje(SystemSemaphores *sems, FileDescriptors *fds, InfoParaMonitor *info) {
+  MemoriaCompartida *shm = NULL;
+  
+ 
+
+  shm = mmap(NULL, sizeof(MemoriaCompartida), PROT_READ | PROT_WRITE, MAP_SHARED, fds->fd_monitorYComprobador, 0);
+  if (shm == MAP_FAILED) {
+    perror("mmap");
+    exit(EXIT_FAILURE);
+}
+
+  //Leemos los datos
+  sem_wait(&shm->sem_fill);
+  sem_wait(&shm->sem_mutex);
+
+
+
+  *info = shm->cola[shm->end];
+    
+  shm->end = (shm->end + 1) % 6;
+
+  sem_post(&shm->sem_mutex);
+  sem_post(&shm->sem_empty);
+
+  munmap(shm, sizeof(MemoriaCompartida));
+
 }
 
 /*****************************************************/
@@ -274,8 +348,7 @@ void leer_mensaje(SystemSemaphores *sems, FileDescriptors *fds, long target, lon
 
 int main(int argc, char *argv[])
 {
-  int pid,lag_comprobador, lag_monitor;
-  struct sigaction act_alarm;
+  int pid;
   SystemSemaphores *sems=NULL;
   FileDescriptors fds;
   MessageQueues mqs;
@@ -283,6 +356,12 @@ int main(int argc, char *argv[])
   char aux[MAX_MESSAGE];
   char *word1=NULL;
   char *word2=NULL;
+  InfoParaMonitor informacion;
+  int finishCondition = 0;
+  struct timespec lag_comprobador, lag_monitor;
+ lag_comprobador.tv_sec = 0;
+ lag_monitor.tv_sec = 0;
+
 
   /*Tratamiento de los argumentos de entrada*/
   if (argc != 3)
@@ -290,8 +369,10 @@ int main(int argc, char *argv[])
     printf("Not enough arguments for the program\n");
     return EXIT_FAILURE;
   }
-  lag_comprobador = atoi(argv[1]);
-  lag_monitor = atoi(argv[2]);
+  lag_comprobador.tv_nsec = atoi(argv[1])* 1000000;
+  lag_monitor.tv_nsec = atoi(argv[2])* 1000000;
+
+
 
   /*Creamos los semáforos del sistema*/
   if ((sems = create_semaphores()) == NULL) {
@@ -321,50 +402,54 @@ int main(int argc, char *argv[])
     semaphores_exit(sems);
     return EXIT_FAILURE;
   }
+
   /*Proceso hijo: monitor*/
   if (pid == 0)
   {
     /*El monitor no necesita la cola que existe entre los mineros y el comprobador*/
-    mq_close(mqs.fd_MinerComprobadorQueue);
-    close_semaphores(sems);
-    free(sems);
     close_message_queues(&mqs);
-    exit(EXIT_SUCCESS);
-  }
-  /*Proceso padre: comprobador*/
-  else {
-    int finishCondition = 0;
-    //Usamos setitimer para poder establecer intervalos de milisegundos, pues con alarm solo se pueden usar segundos
-    struct itimerspec value;
-    timer_t timerid;
-    struct sigevent evp = {0};
 
-    //Introducimos el tiempo en nanosegundos
-    value.it_value.tv_nsec = lag_comprobador * 1000000;
-    value.it_value.tv_sec = lag_comprobador * 1000000;
+    while(finishCondition == 0){
+      //leemos el mensaje del comprobador
+      leer_mensaje(sems, &fds, &informacion);
 
-    //Configuramos la señal que se lanzará una vez transcurrido el timer
-    evp.sigev_notify = SIGEV_SIGNAL;
-    evp.sigev_signo = SIGALRM;
+      //validamos info status e imprimimos
+      switch (informacion.validated)
+      {
 
+      case END_OF_PROGRAM:
+        finishCondition = 1;
+        break;
 
-    //Creamos el timer
-    timer_create(CLOCK_REALTIME, &evp, &timerid);
+      case VALIDATED:
+        printf("Solution accepted: %08d -->%08ld\n", informacion.target, informacion.solution);
+        break;
+      
+      default:
+        printf("Solution rejected: %08d !->%08ld\n", informacion.target, informacion.solution);
+        break;
+      }
 
-
-    act_alarm.sa_handler = handler_alarm;
-    sigemptyset(&(act_alarm.sa_mask));
-    if (sigaction(SIGALRM, &act_alarm, NULL) < 0)
-    {
-      perror(" sigaction ");
-      exit(EXIT_FAILURE);
+      nanosleep(&lag_monitor, NULL);
     }
 
+
+    close_semaphores(sems);
+    close(fds.fd_monitorYComprobador);
+    free(sems);
+
+   
+  }
+
+
+  /*Proceso padre: comprobador*/
+  else {
+    
+   
     /* Set up the mask of signals to temporarily block. */
 
     while (finishCondition == 0) {
-      //Hacemos que empiece a contar el tiempo
-      timer_settime(timerid, TIMER_ABSTIME, &value, NULL);
+     
       /*Esperamos un mensaje de algún minero*/
       if ((mq_receive(mqs.fd_MinerComprobadorQueue, aux, MAX_MESSAGE, NULL)) == (mqd_t)-1) {
         perror(("mq_receive"));
@@ -374,22 +459,36 @@ int main(int argc, char *argv[])
        word1 = strtok(aux, " ");
        if (strcmp(word1, MINERS_ENDED) == 0) {
          finishCondition = 1;
-         printf("Finish condition recibida\n");
+         //mandamos mensaje de final de programa al monitor
+         informacion.validated = END_OF_PROGRAM;
+         escribir_mensaje(sems, &fds, informacion );
+
        }else {
          word2 = strtok(NULL, " ");
-         printf("%s %s\n", word1, word2);
-         while (!interrupted) {
-           sigsuspend(&oldmask);
-         }
+
+         //mandamos el mensaje por memoria compartida hacia el monitor
+        informacion.target = atoi(word1);
+        informacion.solution = atol(word2);
+        validar_sol(&informacion);
+        escribir_mensaje(sems, &fds, informacion );
+
+         //esperamos a la siguiente ronda
+         nanosleep(&lag_comprobador, NULL);
+         
+         
        }
     }
-  }
-
 
   wait(NULL);
   semaphores_exit(sems);
+  close_memoriaCompartida(&fds);
+
   unlink_shared_memory();
   close_message_queues(&mqs);
   unlink_message_queues();
-  return EXIT_SUCCESS;
+
+  }
+
+  exit(EXIT_SUCCESS);
+  
 }

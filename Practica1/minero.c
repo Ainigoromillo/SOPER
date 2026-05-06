@@ -1,7 +1,7 @@
 #include "minero.h"
 
 
-atomic_int finished = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
+volatile atomic_int finished = 0; // Variable global compartida por los hilos que indica que deben dejar de minar
 
 
 #define SOLUTION_NOT_FOUND                                                    \
@@ -13,7 +13,7 @@ atomic_int finished = 0; // Variable global compartida por los hilos que indica 
 
 /**Variable que indica si el minero ha recibido la señal que indica que ha
  * terminado su tiempo*/
-atomic_int terminar = 0;
+volatile atomic_int terminar = 0;
 
 /**Función responsable de gestionar la llegada de señales SIGALRM*/
 void handler_alarm(int sig)
@@ -460,14 +460,11 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array,
 
 mqd_t open_message_queue() {
   mqd_t mqd;
-  struct mq_attr attributes;
-  attributes.mq_maxmsg = 10;
-  attributes.mq_msgsize = MAX_MESSAGE ;
 
-  if ((mqd = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_WRONLY, S_IRUSR | S_IWUSR, &attributes)) ==
+  if ((mqd = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_WRONLY)) ==
       (mqd_t)-1)
   {
-    perror("sem_open");
+    perror("mq_open");
     exit(EXIT_FAILURE);
   }
   return mqd;
@@ -764,9 +761,13 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
 
 
         // Enviamos la solución al comprobador
-        sprintf(aux, "%d, %ld", target, solution);
-        if ((mq_send(mqd, aux, MAX_MESSAGE, 0)) == (mqd_t)-1) {
-          perror(("mq_send"));
+        sprintf(aux, "%d %ld", target, solution);
+
+        //bucle de comprobación, se asegura no ser interrumpido por señales
+        while((mq_send(mqd, aux, MAX_MESSAGE, 0)) == (mqd_t)-1){
+          if(errno == EINTR) continue;
+
+          perror("mq_send");
           exit(EXIT_FAILURE);
         }
 
@@ -941,6 +942,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
     }
     if (n_miners == 0) {
       sprintf(aux, MINERS_ENDED);
+      
       mq_send(mqd, aux, MAX_MESSAGE, 0);
     }
     // Vemos que la seccion critica unifica desinscribirse y countplayers. Esto soluciona el caso de que dos se desapunten y lean 0 personas a la vez
@@ -949,8 +951,5 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
     // limpiamos ejecucion
     clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
     mq_close(mqd);
-    close(minero_escribe[1]);
-    close(registrador_escribe[0]);
-    wait(NULL);
-    printf("Miner <%d> exited with status 0\n", getpid());
+
 }

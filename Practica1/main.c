@@ -26,10 +26,6 @@ int main(int argc, char *argv[])
   int registrador_escribe[2];
 
 
-
-
-
-
   /*Tratamiento de los argumentos de entrada*/
   if (argc != 3)
   {
@@ -80,6 +76,10 @@ int main(int argc, char *argv[])
   {
 
     funcionalidad_minero(minero_escribe, registrador_escribe, n_secs, n_threads);
+    close(minero_escribe[1]);
+    close(registrador_escribe[0]);
+    wait(NULL);
+    printf("Miner <%d> exited with status 0\n", getpid());
     return EXIT_SUCCESS;
   }
 }

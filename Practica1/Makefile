@@ -64,19 +64,25 @@ cleanRapido:
 	rm mainRapido.o mainRapido
 
 clean_mq:
-	rm -f /dev/mqueue/comprobador_monitor_mq
 	rm -f /dev/mqueue/miner_comprobador_mq
 
+clean_all:
+	$(MAKE) clean_mq
+	$(MAKE) clean_sem
+	$(MAKE) clean_shm
 
 clean_sem:
 	rm -f /dev/shm/sem.mutex_pids_sem
 	rm -f /dev/shm/sem.mutex_target
 	rm -f /dev/shm/sem.ganador_sem
 	rm -f /dev/shm/sem.mutex_voting
+
+
+clean_shm:
 	rm -f /dev/shm/Pids.pid
 	rm -f /dev/shm/Voting.vot
 	rm -f /dev/shm/Target.tgt
-	rm -f Pids.pid Target.tgt Voting.vot
+	rm -f /dev/shm/systemFile
 
 run_monitor:
 	./monitor 100 100
