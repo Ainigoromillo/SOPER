@@ -9,6 +9,12 @@
  */
 #include "resources.h"
 
+#define SEM_MUTEX "/sem_mutex"
+#define SEM_FILL "/sem_fill"
+#define SEM_EMPTY "/sem_empty"
+
+#define FICHERO_SISTEMA "/systemFile"
+
 /**
  * Estructura que almacena todos los semáforos que usará el sistema, los cuales son creados y destruidos por el monitor
  */
@@ -17,13 +23,23 @@ typedef struct{
   sem_t *mutex_pids;
   sem_t *ganador_sem;
   sem_t *mutex_target;
+  sem_t *sem_mutex;
+  sem_t * sem_fill;
+  sem_t * sem_empty;
 }SystemSemaphores;
 
 typedef struct{
   int fd_Pids;
   int fd_Target;
   int fd_Votacion;
+  int fd_monitorYComprobador;
 }FileDescriptors;
+
+typedef struct {
+  long target;
+  long solution;
+  char validated;
+}InfoParaMonitor;
 
 typedef struct {
   int fd_MinerComprobadorQueue;
@@ -47,6 +63,18 @@ void close_semaphores(const SystemSemaphores *sems) {
   sem_close(sems->mutex_pids);
   sem_close(sems->mutex_target);
   sem_close(sems->mutex_votacion);
+  sem_close(sems->sem_mutex);
+  sem_close(sems->sem_empty);
+  sem_close(sems->sem_fill);
+}
+
+void create_individual_semaphore(sem_t **semaphore, int init_value) {
+  if (((*semaphore) = sem_open(MUTEX_VOTACION_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, init_value)) ==
+      SEM_FAILED)
+  {
+    perror("sem_open");
+    exit(EXIT_FAILURE);
+  }
 }
 
 /**
@@ -57,35 +85,17 @@ SystemSemaphores *create_semaphores() {
   if (!((sems = (SystemSemaphores *) malloc(sizeof(SystemSemaphores))))) {
     return NULL;
   }
-  if ((sems->mutex_votacion = sem_open(MUTEX_VOTACION_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
-      SEM_FAILED)
-  {
-    perror("sem_open");
-    exit(EXIT_FAILURE);
-  }
+  //Semáforos para el fichero monitor
+  create_individual_semaphore(&(sems->sem_mutex), 1);
+  create_individual_semaphore(&(sems->sem_empty), 0);
+  create_individual_semaphore(&(sems->sem_fill), 0);
 
-  if ((sems->mutex_pids = sem_open(MUTEX_PIDS_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
-      SEM_FAILED)
-  {
-    perror("sem_open");
-    exit(EXIT_FAILURE);
-  }
+  //Semáforos para los mineros
+  create_individual_semaphore(&(sems->ganador_sem), 1);
+  create_individual_semaphore(&(sems->mutex_pids), 1);
+  create_individual_semaphore(&(sems->mutex_target), 1);
+  create_individual_semaphore(&(sems->mutex_votacion), 1);
 
-  if ((sems->ganador_sem = sem_open(GANADOR_SEM, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
-      SEM_FAILED)
-  {
-    perror("sem_open");
-    exit(EXIT_FAILURE);
-  }
-
-
-  if ((sems->mutex_target = sem_open(MUTEX_TARGET_SEM_NAME, O_CREAT, S_IRUSR | S_IWUSR, 1)) ==
-      SEM_FAILED)
-  {
-    perror("sem_open");
-    exit(EXIT_FAILURE);
-  }
-  /*Una vez creados los semáforos, los cerramos*/
   return sems;
 }
 
@@ -94,6 +104,9 @@ void unlink_semaphores() {
   sem_unlink(GANADOR_SEM);
   sem_unlink(MUTEX_PIDS_SEM_NAME);
   sem_unlink(MUTEX_TARGET_SEM_NAME);
+  sem_unlink(SEM_FILL);
+  sem_unlink(SEM_EMPTY);
+  sem_unlink(SEM_MUTEX);
 }
 
 void semaphores_exit(SystemSemaphores *sems) {
@@ -159,6 +172,19 @@ void create_fds(FileDescriptors *fds) {
   munmap(target, sizeof(int));
 
   close(fds->fd_Target);
+
+  fds->fd_monitorYComprobador = shm_open ( FICHERO_SISTEMA , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
+  if (fds->fd_monitorYComprobador != -1 ) {
+    if((ftruncate(fds->fd_monitorYComprobador, sizeof(InfoParaMonitor))) == -1){
+      perror("ftruncate");
+      sem_unlink(FICHERO_SISTEMA);
+      exit(EXIT_FAILURE);
+    }
+  }else {
+    perror("shm_open");
+    exit(EXIT_FAILURE);
+  }
+  close(fds->fd_monitorYComprobador);
 }
 
 void unlink_shared_memory() {
@@ -196,6 +222,50 @@ void create_message_queues(MessageQueues *mqs) {
     perror("mq_open");
     exit(EXIT_FAILURE);
   }
+}
+
+/****************************************************/
+/*************Funciones del comprobador******/
+/****************************************************/
+void escribir_mensaje(SystemSemaphores *sems, FileDescriptors *fds, long target, long solution, char validated) {
+  InfoParaMonitor *infoParaMonitor = NULL;
+  int fd = shm_open(FICHERO_SISTEMA, O_RDWR, S_IRUSR | S_IWUSR);
+  if (fd == -1) exit(EXIT_FAILURE);
+
+  infoParaMonitor = mmap(NULL, sizeof(InfoParaMonitor), PROT_WRITE, MAP_SHARED, fd, 0);
+  if (!infoParaMonitor) exit(EXIT_FAILURE);
+
+  sem_wait(sems->sem_empty);
+  sem_wait(sems->sem_mutex);
+  //Escribimos los datos
+  infoParaMonitor->solution = solution;
+  infoParaMonitor->target = target;
+  infoParaMonitor->validated = validated;
+  sem_post(sems->sem_mutex);
+  sem_post(sems->sem_fill);
+
+  munmap(infoParaMonitor, sizeof(InfoParaMonitor));
+  close(fd);
+}
+
+/****************************************************/
+/*************Funciones del monitor******/
+/****************************************************/
+void leer_mensaje(SystemSemaphores *sems, FileDescriptors *fds, long target, long solution, char validated) {
+  InfoParaMonitor *infoParaMonitor = NULL;
+  int fd = shm_open(FICHERO_SISTEMA, O_RDWR, S_IRUSR | S_IWUSR);
+  if (fd == -1) exit(EXIT_FAILURE);
+
+  infoParaMonitor = mmap(NULL, sizeof(InfoParaMonitor), PROT_WRITE, MAP_SHARED, fd, 0);
+  if (!infoParaMonitor) exit(EXIT_FAILURE);
+
+  //Escribimos los datos
+  infoParaMonitor->solution = solution;
+  infoParaMonitor->target = target;
+  infoParaMonitor->validated = validated;
+
+  munmap(infoParaMonitor, sizeof(InfoParaMonitor));
+  close(fd);
 }
 
 /*****************************************************/
