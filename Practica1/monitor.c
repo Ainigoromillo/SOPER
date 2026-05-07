@@ -509,8 +509,13 @@ int main(int argc, char *argv[])
     printf("Not enough arguments for the program\n");
     return EXIT_FAILURE;
   }
-  lag_comprobador.tv_nsec = atoi(argv[1])* 1000000;
-  lag_monitor.tv_nsec = atoi(argv[2])* 1000000;
+  if (atoi(argv[1]) * 1000000 > 1000000000) {
+    lag_comprobador.tv_sec = atoi(argv[1]) / 1000;
+    lag_monitor.tv_sec = atoi(argv[2]) / 1000;
+  }else {
+    lag_comprobador.tv_nsec = atoi(argv[1])* 1000000;
+    lag_monitor.tv_nsec = atoi(argv[2])* 1000000;
+  }
 
 
 
@@ -629,8 +634,6 @@ int main(int argc, char *argv[])
           //esperamos a la siguiente ronda
           nanosleep(&lag_comprobador, NULL);
         }
-        //al final hacemos el ranking de los procesos.
-        ranking_mineros(&fds, sems);
       }
       if (interrupted_monitor == 1){
         printf("Voy a avisar a los mineros y esperarles\n");
@@ -640,6 +643,8 @@ int main(int argc, char *argv[])
       }
 
     }
+    //al final hacemos el ranking de los procesos.
+    ranking_mineros(&fds, sems);
 
 
   wait(NULL);
