@@ -27,6 +27,7 @@ typedef struct{
   sem_t *ganador_sem;
   sem_t *mutex_target;
 
+  sem_t *mutex_wallets;
 
 }SystemSemaphores;
 
@@ -34,9 +35,13 @@ typedef struct{
 
 
 typedef struct{
+  //memoria que usan los mineros
   int fd_Pids;
   int fd_Target;
   int fd_Votacion;
+  int fd_wallets;
+
+  //memoria compartida entre comprobador-monitor
   int fd_monitorYComprobador;
 }FileDescriptors;
 
@@ -77,6 +82,7 @@ void close_semaphores(const SystemSemaphores *sems) {
   sem_close(sems->mutex_pids);
   sem_close(sems->mutex_target);
   sem_close(sems->mutex_votacion);
+  sem_close(sems->mutex_wallets);
 }
 
 void create_individual_semaphore(sem_t **semaphore, int init_value, char *sem_name) {
@@ -103,6 +109,7 @@ SystemSemaphores *create_semaphores() {
   create_individual_semaphore(&(sems->mutex_pids), 1, MUTEX_PIDS_SEM_NAME);
   create_individual_semaphore(&(sems->mutex_target), 1, MUTEX_TARGET_SEM_NAME);
   create_individual_semaphore(&(sems->mutex_votacion), 1, MUTEX_VOTACION_SEM_NAME);
+  create_individual_semaphore(&(sems->mutex_wallets), 1, MUTEX_WALLETS);
 
   return sems;
 }
@@ -216,6 +223,22 @@ void create_fds(FileDescriptors *fds) {
   close(fds->fd_Target);
 
 
+  /*Memoria compartida para los wallets de todos los mineros */
+    fds->fd_wallets = shm_open ( FICHERO_WALLETS , O_RDWR | O_CREAT | O_EXCL , S_IRUSR | S_IWUSR ) ;
+  if (fds->fd_wallets != -1 ) {
+    if((ftruncate(fds->fd_Pids, sizeof(Wallet) * MAX_MINEROS)) == -1){
+      perror("ftruncate");
+      sem_unlink(FICHERO_TARGET);
+      sem_unlink(FICHERO_VOTACION);
+      sem_unlink(FICHERO_PIDS);
+      exit(EXIT_FAILURE);
+    }
+  }else {
+    perror("shm_open");
+    exit(EXIT_FAILURE);
+  }
+  close(fds->fd_wallets);
+
   //abrimos el descriptor de memoria compartida entre monitor-comprobador y lo dejamos abierto para acceder mas adelante
   fds->fd_monitorYComprobador = abrir_descriptor_compartida();
   
@@ -229,6 +252,7 @@ void unlink_shared_memory() {
   shm_unlink(FICHERO_TARGET);
   shm_unlink(FICHERO_VOTACION);
   shm_unlink(FICHERO_SISTEMA);
+  shm_unlink(FICHERO_WALLETS);
 }
 
 void close_memoriaCompartida(FileDescriptors *fds){
@@ -250,6 +274,65 @@ void close_memoriaCompartida(FileDescriptors *fds){
   return;
  }
 
+
+
+
+void ranking_mineros(FileDescriptors *fds, SystemSemaphores *sems) {
+    Wallet *wallets;
+    Wallet sorted_wallets[MAX_MINEROS];
+    int num_mineros = 0;
+    int i, j;
+    Wallet tmp;
+
+    fds->fd_wallets = shm_open(FICHERO_WALLETS, O_RDONLY, 0);
+    if (fds->fd_wallets == -1) {
+        perror("shm_open");
+        exit(EXIT_FAILURE);
+    }
+
+
+    wallets = mmap(NULL, MAX_MINEROS * sizeof(Wallet), PROT_READ,
+                   MAP_SHARED, fds->fd_wallets, 0);
+    close(fds->fd_wallets);
+    if (wallets == MAP_FAILED) {
+        perror("mmap en ranking_mineros");
+        exit(EXIT_FAILURE);
+    }
+
+  sem_wait(sems->mutex_wallets);
+       
+
+    for (i = 0; i < MAX_MINEROS; i++) {
+        if (wallets[i].pid != 0) {
+            sorted_wallets[num_mineros].pid    = wallets[i].pid;
+            sorted_wallets[num_mineros].monedas = wallets[i].monedas;
+            num_mineros++;
+        }else{
+          break;
+        }
+    }
+
+    sem_post(sems->mutex_wallets);
+    munmap(wallets, MAX_MINEROS * sizeof(Wallet));
+
+    /* Bubble sort descendente por monedas */
+    for (i = 0; i < num_mineros - 1; i++) {
+        for (j = 0; j < num_mineros - 1 - i; j++) {
+            if (sorted_wallets[j].monedas < sorted_wallets[j + 1].monedas) {
+                tmp               = sorted_wallets[j];
+                sorted_wallets[j] = sorted_wallets[j + 1];
+                sorted_wallets[j + 1] = tmp;
+            }
+        }
+    }
+
+    printf("=== RANKING MINEROS ===\n");
+    for (i = 0; i < num_mineros; i++) {
+        printf("%d: PID %d -> %d monedas\n",
+               i + 1, sorted_wallets[i].pid, sorted_wallets[i].monedas);
+    }
+}
+
 /*****************************************************/
 /**********COLAS DE MENSAJES**************************/
 /*****************************************************/
@@ -258,7 +341,6 @@ void close_message_queues(MessageQueues *mqs) {;
 }
 
 void unlink_message_queues() {
-  mq_unlink(COMPROBADOR_MONITOR_MESSAGE_QUEUE);
   mq_unlink(MINER_COMPROBADOR_MESSAGE_QUEUE);
 }
 
@@ -359,6 +441,8 @@ int main(int argc, char *argv[])
   InfoParaMonitor informacion;
   int finishCondition = 0;
   struct timespec lag_comprobador, lag_monitor;
+
+
  lag_comprobador.tv_sec = 0;
  lag_monitor.tv_sec = 0;
 
@@ -444,9 +528,7 @@ int main(int argc, char *argv[])
 
   /*Proceso padre: comprobador*/
   else {
-    
-   
-    /* Set up the mask of signals to temporarily block. */
+
 
     while (finishCondition == 0) {
      
@@ -478,6 +560,9 @@ int main(int argc, char *argv[])
          
        }
     }
+
+    //al final hacemos el ranking de los procesos.
+    ranking_mineros(&fds, sems);
 
   wait(NULL);
   semaphores_exit(sems);

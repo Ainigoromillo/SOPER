@@ -87,7 +87,7 @@ clean_shm:
 run_monitor:
 	./monitor 100 100
 run_mineros:
-	./miner 7 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1  & ./miner 6 1  & ./miner 6 1
+	./miner 12 1 & ./miner 12 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1  & ./miner 6 1  & ./miner 6 1
 
 runv:
 

@@ -151,6 +151,81 @@ int fd_shm;
   munmap(pids, MAX_MINEROS * sizeof(int));
 }
 
+
+/**
+ * @brief Funcion con la cual los mineros se apuntan a la lista de wallets (numero de monerdas) de todos los procesos
+ * @param pid identificador del minero que se inscribe
+ */
+void inscribirseWallets(int pid)
+{
+int fd_shm;
+  Wallet *wallets=NULL;
+  int i;
+
+  fd_shm = shm_open ( FICHERO_WALLETS , O_RDWR , 0) ;
+  if ( fd_shm == -1) {
+    perror ( " Error opening the shared memory segment \n " ) ;
+    close(fd_shm);
+    exit ( EXIT_FAILURE ) ;
+  }
+   
+  wallets = mmap(NULL, MAX_MINEROS * sizeof(Wallet), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
+  if(wallets == MAP_FAILED){
+    close(fd_shm);
+    perror("mmap en inscribirseWallets");
+    exit(EXIT_FAILURE);
+  }
+  for(i=0;i<MAX_MINEROS;i++){
+    if(wallets[i].pid != 0){
+      continue;
+    }else{
+      wallets[i].pid = pid;
+      wallets[i].monedas = 0;
+
+      break;
+    }
+  } 
+  close(fd_shm);
+  munmap(wallets, MAX_MINEROS * sizeof(Wallet));
+}
+
+
+
+
+/**
+ * @brief Funcion con la cual los mineros se suman una moneda si su ronda es verificada
+ * @param pid identificador del minero que se inscribe
+ */
+void sumarMonedaWallets(int pid)
+{
+int fd_shm;
+  Wallet *wallets=NULL;
+  int i;
+
+  fd_shm = shm_open ( FICHERO_WALLETS , O_RDWR , 0) ;
+  if ( fd_shm == -1) {
+    perror ( " Error opening the shared memory segment \n " ) ;
+    close(fd_shm);
+    exit ( EXIT_FAILURE ) ;
+  }
+   
+  wallets = mmap(NULL, MAX_MINEROS * sizeof(Wallet), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
+  if(wallets == MAP_FAILED){
+    close(fd_shm);
+    perror("mmap en inscribirseWallets");
+    exit(EXIT_FAILURE);
+  }
+  for(i=0;i<MAX_MINEROS;i++){
+    if(wallets[i].pid == pid){
+      wallets[i].monedas += 1;
+      break;
+    }
+  } 
+
+  close(fd_shm);
+  munmap(wallets, MAX_MINEROS * sizeof(Wallet));
+}
+
 /**
  * @brief Funcion con la que los procesos votan si la solucion es correcta o no
  *
@@ -428,16 +503,19 @@ void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
 }
 
 /**
- * @brief Libera todos los recursos creados para la ejecución de hilos
- *
- * @param n_threads indica el número de hilos creados
- * @param arg_array array de todas las estructuras creadas para ser pasadas como
- * argumento a los hilos
- * @param thread_array array de los identificadores de los hilos
- * @params semaphores
+ * @brief Libera las estructuras que se han guardado durante la ejecucion del programa
+ * 
+ * @param n_threads 
+ * @param arg_array 
+ * @param thread_array 
+ * @param mutex_pids 
+ * @param mutex_target 
+ * @param ganador_sem 
+ * @param mutex_votacion 
+ * @param mutex_wallets 
  */
 void clean_and_free(int n_threads, ArgsSolucion **arg_array,
-                    pthread_t *thread_array, sem_t *mutex_pids, sem_t *mutex_target, sem_t *ganador_sem, sem_t *mutex_votacion)
+                    pthread_t *thread_array, sem_t *mutex_pids, sem_t *mutex_target, sem_t *ganador_sem, sem_t *mutex_votacion, sem_t *mutex_wallets)
 {
   int k;
   for (k = 0; k < n_threads && arg_array; k++)
@@ -456,6 +534,7 @@ void clean_and_free(int n_threads, ArgsSolucion **arg_array,
   sem_close(mutex_target);
   sem_close(ganador_sem);
   sem_close(mutex_votacion);
+  sem_close(mutex_wallets);
 }
 
 mqd_t open_message_queue() {
@@ -562,7 +641,7 @@ void configuracion_señales(sigset_t *origMask, sigset_t *block2mask, sigset_t *
     }
 }
 
-void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **ganador_sem , sem_t **mutex_votacion, 
+void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **ganador_sem , sem_t **mutex_votacion, sem_t **mutex_wallets,
   int n_threads,  ArgsSolucion **arg_array,  pthread_t *thread_array){
 
 
@@ -573,11 +652,18 @@ void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **g
       exit(EXIT_FAILURE);
     }
 
+    if ((*mutex_wallets = sem_open(MUTEX_WALLETS, 0, 0, 1)) ==
+        SEM_FAILED)
+    {
+      perror("sem_open");
+      exit(EXIT_FAILURE);
+    }
+
     if ((*mutex_pids = sem_open(MUTEX_PIDS_SEM_NAME, 0, 0, 1)) ==
         SEM_FAILED)
     {
       perror("sem_open");
-      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion);
+      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion, *mutex_wallets);
       exit(EXIT_FAILURE);
     }
 
@@ -585,7 +671,7 @@ void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **g
         SEM_FAILED)
     {
       perror("sem_open");
-      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion);
+      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion, *mutex_wallets);
       exit(EXIT_FAILURE);
     }
 
@@ -594,7 +680,7 @@ void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **g
         SEM_FAILED)
     {
       perror("sem_open");
-      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion);
+      clean_and_free(n_threads, arg_array, thread_array, *mutex_pids, *mutex_target, *ganador_sem, *mutex_votacion, *mutex_wallets);
       exit(EXIT_FAILURE);
     }
 }
@@ -611,7 +697,7 @@ void configuracion_mensajes( mqd_t *mqd, int minero_escribe[2], int registrador_
 }
 
 void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_threads, ArgsSolucion **arg_array, pthread_t *thread_array, 
- mqd_t mqd, int minero_escribe[2], int registrador_escribe[2], sem_t *mutex_target, sem_t *ganador_sem , sem_t *mutex_votacion, sem_t *mutex_pids,
+ mqd_t mqd, int minero_escribe[2], int registrador_escribe[2], sem_t *mutex_target, sem_t *ganador_sem , sem_t *mutex_votacion, sem_t *mutex_pids, sem_t *mutex_wallets,
  int yesNo[2]){
   struct timespec ts = {
       .tv_sec = 0,
@@ -747,6 +833,11 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
         {
           rondas_verificadas++;
           status = validado;
+
+          //sumamos moneda en el registro del sistema
+          sem_wait(mutex_wallets);
+          sumarMonedaWallets(getpid());
+          sem_post(mutex_wallets);
         }
         else
         {
@@ -759,6 +850,8 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
         sprintf(buffer, "%d|%d|%ld|%d|%d|%d|%s\n", rondas_corridas, target, solution, yesNo[0], yesNo[1], rondas_verificadas, status);
         write(minero_escribe[1], buffer, strlen(buffer) + 1);
 
+
+        
 
         // Enviamos la solución al comprobador
         sprintf(aux, "%d %ld", target, solution);
@@ -786,7 +879,7 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
           sem_post(mutex_pids);
 
           mq_close(mqd);
-          clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+          clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion, mutex_wallets );
           printf("Miner exited with status 0\n");
           wait(NULL);
           exit(EXIT_SUCCESS);
@@ -819,6 +912,8 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
   sem_t *mutex_target = NULL;
   sem_t *ganador_sem = NULL;
   sem_t *mutex_votacion = NULL;
+  sem_t *mutex_wallets = NULL;
+
   sigset_t origMask, block2mask, block1mask;
   int n_miners;
   int ganador = 0;
@@ -846,7 +941,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
 
     /**Abrimos todos los semaforos para la ejecucion de las tareas coordinadas */
 
-    configuracion_semaforos(&mutex_pids, &mutex_target,& ganador_sem, &mutex_votacion, n_threads, arg_array, thread_array);
+    configuracion_semaforos(&mutex_pids, &mutex_target,& ganador_sem, &mutex_votacion, &mutex_wallets , n_threads, arg_array, thread_array);
 
     // Iniciamos la cuenta con la alarma
     alarm(n_secs);
@@ -855,6 +950,10 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
     sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
     inscribirseLista(getpid());
     sem_post(mutex_pids);
+
+    sem_wait(mutex_wallets);
+    inscribirseWallets(getpid());
+    sem_post(mutex_wallets);
 
     /*******************************/
     /****RESERVAR MEMORIA DE HILOS**/
@@ -875,7 +974,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
       sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
       desinscribirseLista(getpid());
       sem_post(mutex_pids);
-      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+      clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion, mutex_wallets);
       printf("miner <%d> exited with status 1\n", getpid());
       wait(NULL);
       exit(EXIT_FAILURE);
@@ -891,7 +990,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
         sem_wait(mutex_pids); /*Accedemos a sección crítica: el fichero de pid's*/
         desinscribirseLista(getpid());
         sem_post(mutex_pids);
-        clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+        clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion, mutex_wallets);
         printf("miner <%d> exited with status 1\n", getpid());
         wait(NULL);
         exit(EXIT_FAILURE);
@@ -918,7 +1017,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
     /*************************************/
 
     bucle_de_ejecucion(&ganador, target, block2mask, n_threads, arg_array, thread_array, mqd, minero_escribe, 
-      registrador_escribe, mutex_target, ganador_sem, mutex_votacion, mutex_pids , yesNo);
+      registrador_escribe, mutex_target, ganador_sem, mutex_votacion, mutex_pids , mutex_wallets,  yesNo);
     
 
     /**********FINAL DE EJECUCION Y MUERTE DEL PROCESO**************/
@@ -949,7 +1048,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
     // Cuando el primero en desapuntarse deberia haber leido que quedaba uno
 
     // limpiamos ejecucion
-    clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target, ganador_sem, mutex_votacion);
+    clean_and_free(n_threads, arg_array, thread_array, mutex_pids, mutex_target,  ganador_sem, mutex_votacion,  mutex_wallets);
     mq_close(mqd);
 
 }

@@ -34,9 +34,18 @@
 #define MUTEX_TARGET_SEM_NAME "/mutex_target"
 #define GANADOR_SEM "/ganador_sem"
 #define MUTEX_VOTACION_SEM_NAME "/mutex_voting"
+#define MUTEX_WALLETS "/mutex_wallets"
 
 #define MINER_COMPROBADOR_MESSAGE_QUEUE "/miner_comprobador_mq"
-#define COMPROBADOR_MONITOR_MESSAGE_QUEUE "/comprobador_monitor_mq"
+
+/**
+ * @brief Estructura que guarda el par pid-numero de monedas
+ * 
+ */
+typedef struct{
+    int pid;
+    int monedas;
+}Wallet;
 
 #define MAX_MINEROS 20
 #define NO_TARGET -1
@@ -54,6 +63,11 @@ los mineros que participen en las carreras*/
 #define FICHERO_VOTACION                                                      \
 "Voting.vot" /**Nombre del fichero donde los procesos perdedores apuntan su \
 votacion y el proceso ganador comprueba si todos han votado */
+
+#define FICHERO_WALLETS                                                      \
+"Wallets.txt" /**Nombre del fichero donde se guarda el registro de todos los\
+mineros con sus rondas ganadas*/
+
 
 #define MINERS_ENDED "MinersEnded"
 
