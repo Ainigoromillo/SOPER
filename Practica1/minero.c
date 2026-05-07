@@ -8,6 +8,8 @@ volatile atomic_int finished = 0; // Variable global compartida por los hilos qu
   -1 /**Valor que devuelven los hilos si no han encontrado una solución para \
         el target */
 
+#define MONITOR_DIED  (-2)
+
 // Condicion de solucion correcta, por ahora tiene una probabilidad de 75% de validarse
 #define VALIDATE(solution) (rand() % 4 != 0)
 
@@ -33,6 +35,7 @@ void handler_sigusr2(int sig)
   // simplemente esta señal indica que los procesos deben dejar de minar
   finished = 1;
 }
+
 
 /**
  * @brief Estructura que almacena la información que deben recibir los hilos
@@ -239,19 +242,9 @@ void votar(int solution)
 
   fd_shm = shm_open ( FICHERO_VOTACION , O_RDWR | O_EXCL , S_IRUSR | S_IWUSR ) ;
   if ( fd_shm == -1) {
-    if ( errno == EEXIST ) {
-      fd_shm = shm_open ( FICHERO_VOTACION , O_RDWR , 0) ;
-      if ( fd_shm == -1) {
-        perror ( " Error opening the shared memory segment \n " ) ;
-      close(fd_shm);
-        exit ( EXIT_FAILURE ) ;
-      } else {
-      }
-    } else {
-      perror ( " Error creating the shared memory segment \n " ) ;
-      close(fd_shm);
-      exit ( EXIT_FAILURE ) ;
-    }
+    perror ( " Error creating the shared memory segment \n " ) ;
+    close(fd_shm);
+    exit ( EXIT_FAILURE ) ;
  }
    
   votations = mmap(NULL, MAX_MINEROS * sizeof(char), PROT_READ | PROT_WRITE, MAP_SHARED, fd_shm, 0);
@@ -439,7 +432,7 @@ void wait_votation(sem_t *mutex_votacion, int corredores, int yesNo[2])
 
   // eliminamos a uno de lo corredores, sera el propio ganador, que no vota
   corredores--;
-  while (i < MAX_INTENTOS && !votacionTerminada)
+  while (i < MAX_INTENTOS && !votacionTerminada && !terminar)
   {
     votados = 0;
 
@@ -543,6 +536,9 @@ mqd_t open_message_queue() {
   if ((mqd = mq_open(MINER_COMPROBADOR_MESSAGE_QUEUE, O_WRONLY)) ==
       (mqd_t)-1)
   {
+    if (errno == ENOENT){
+      return MONITOR_DIED;
+    }
     perror("mq_open");
     exit(EXIT_FAILURE);
   }
@@ -685,15 +681,17 @@ void configuracion_semaforos(sem_t **mutex_pids, sem_t **mutex_target, sem_t **g
     }
 }
 
-void configuracion_mensajes( mqd_t *mqd, int minero_escribe[2], int registrador_escribe[2]){
-
+int configuracion_mensajes( mqd_t *mqd, int minero_escribe[2], int registrador_escribe[2]){
    *mqd = open_message_queue();
+  if (*mqd == MONITOR_DIED) {
+    return MONITOR_DIED;
+  }
 
 
     /**Se cierran pipes pertinentes*/
     close(registrador_escribe[1]); /*registrador escribe (escritura)*/
     close(minero_escribe[0]);      /*minero escribe (lectura)*/
-
+    return 0;
 }
 
 void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_threads, ArgsSolucion **arg_array, pthread_t *thread_array, 
@@ -754,6 +752,7 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
 
         // Este sigsuspend tambien detecta alarma, por lo que si a un proceso le suena, empezará a ejecutarse
         sigsuspend(&block2mask);
+        if (terminar == 1) continue;
 
       }
 
@@ -907,7 +906,7 @@ void bucle_de_ejecucion(int *ganador, int target, sigset_t block2mask, int n_thr
 void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int n_secs, int n_threads){
   long interval = 0;
   int i;
-  int yesNo[2];
+  int yesNo[2] = {0,0};
   sem_t *mutex_pids = NULL;
   sem_t *mutex_target = NULL;
   sem_t *ganador_sem = NULL;
@@ -921,6 +920,7 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
   char aux [ MAX_MESSAGE ];
   mqd_t mqd;
   struct sigaction act_alarm, act_sigusr1, act_sigusr2;
+  int monitor_died = 0;
 
   pthread_t *thread_array = NULL;
   ArgsSolucion **arg_array = NULL;
@@ -933,8 +933,11 @@ void funcionalidad_minero(int minero_escribe[2], int registrador_escribe[2], int
      **************************************************/
 
      //Configuramos mensajes, la cola y pipe con el registrador
-    configuracion_mensajes(&mqd, minero_escribe, registrador_escribe);
-
+    monitor_died = configuracion_mensajes(&mqd, minero_escribe, registrador_escribe);
+    if (monitor_died) {
+      printf("No hay ningún comprobador para empezar la carrera :(\n");
+      exit(EXIT_SUCCESS);
+    }
 
     //Configuramos los handlers para las señales y las mascaras
     configuracion_señales(&origMask, &block2mask, &block1mask ,&act_alarm, &act_sigusr1, &act_sigusr2);
