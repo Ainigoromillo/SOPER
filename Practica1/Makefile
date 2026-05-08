@@ -20,7 +20,7 @@ monitor: monitor.o pow.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 minerRapido: mainRapido.o pow.o
-	$(CC) $(CFLAGS) -o $@ $^c-lpthread
+	$(CC) $(CFLAGS) -o $@ $^ -lpthread
 
 mainRapido: mainRapido.c
 	$(CC) $(CFLAGS) -o $@ -c $<
@@ -41,6 +41,18 @@ registrador.o: registrador.c registrador.h resources.h
 	$(CC) $(CFLAGS) -o $@ -c $<
 
 
+monitor_alternativo: monitor_alternativo.o pow.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+
+monitor_alternativo.o: monitor_alternativo.c resources.h pow.h
+	$(CC) $(CFLAGS) -o $@ -c $<
+
+
+monitor_cola: monitor_cola.o pow.o
+	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
+
+monitor_cola.o: monitor_cola.c resources.h pow.h
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 .PHONY: clean cleanLog run all
 .PHONY: clean cleanLog clean_sem clean_mq cleanAll run all
