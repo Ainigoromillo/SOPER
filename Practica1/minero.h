@@ -2,7 +2,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #define MAX_BUFFER 4
-#define MAX_INTENTOS 500 // El número maximo de esperas que hace el proceso ganador a que los demas voten
+#define MAX_INTENTOS 100 // El número maximo de esperas que hace el proceso ganador a que los demas voten
 #define YES 'y'
 #define NO 'n'
 

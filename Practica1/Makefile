@@ -16,7 +16,7 @@ all: $(programs)
 miner: $(objectsMiner)
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
-monitor:	monitor.o
+monitor: monitor.o pow.o
 	$(CC) $(CFLAGS) -o $@ $^ $(LIBS)
 
 minerRapido: mainRapido.o pow.o
@@ -28,12 +28,11 @@ mainRapido: mainRapido.c
 main.o: main.c resources.h pow.h
 	$(CC) $(CFLAGS) -o $@ -c $<
 
-monitor.o: monitor.c resources.h pow.h
-	$(CC) $(CFLAGS) -o $@ -c $<
-
 pow.o: pow.c
 	$(CC) $(CFLAGS) -o $@ -c $<
 
+monitor.o: monitor.c resources.h pow.h 
+	$(CC) $(CFLAGS) -o $@ -c $<
 
 minero.o: minero.c minero.h resources.h
 	$(CC) $(CFLAGS) -o $@ -c $<
@@ -76,6 +75,7 @@ clean_sem:
 	rm -f /dev/shm/sem.mutex_target
 	rm -f /dev/shm/sem.ganador_sem
 	rm -f /dev/shm/sem.mutex_voting
+	rm -f /dev/shm/sem.mutex_wallets
 
 
 clean_shm:
@@ -83,14 +83,14 @@ clean_shm:
 	rm -f /dev/shm/Voting.vot
 	rm -f /dev/shm/Target.tgt
 	rm -f /dev/shm/systemFile
+	rm -f /dev/shm/Wallets.txt
 
 run_monitor:
 	./monitor 100 100
+
 run_mineros:
-	./miner 12 1 & ./miner 12 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1 & ./miner 6 1  & ./miner 6 1  & ./miner 6 1
+	./miner 12 4 &./miner 12 4
 
-runv:
 
-	valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS) & valgrind --leak-check=full --track-origins=yes -s ./miner $(N_SECS) $(N_THREADS)
-
+	
 
